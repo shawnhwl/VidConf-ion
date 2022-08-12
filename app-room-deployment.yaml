@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert
+    kompose.version: 1.26.1 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: app-room
+  name: app-room
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: app-room
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert
+        kompose.version: 1.26.1 (HEAD)
+      creationTimestamp: null
+      labels:
+        io.kompose.network/ionnet: "true"
+        io.kompose.service: app-room
+    spec:
+      containers:
+        - image: pionwebrtc/ion:latest-app-room
+          name: app-room
+          resources: {}
+          volumeMounts:
+            - mountPath: /configs/app-room.toml
+              name: app-room-claim0
+              subPath: app-room.toml
+      restartPolicy: Always
+      volumes:
+        - name: app-room-claim0
+          configMap:
+            name: app-room-config
+status: {}

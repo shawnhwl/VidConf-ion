@@ -1,0 +1,13 @@
+apiVersion: v1
+data:
+  signal.toml: "[global]\n# data center id\ndc = \"dc1\"\n\n[log]\nlevel = \"info\"\n#
+    level = \"debug\"\n\n[nats]\nurl = \"nats://nats:4222\"\n\n[signal.grpc]\n#listen
+    ip port\nhost = \"0.0.0.0\"\nport = \"5551\"\nallow_all_origins = true\n# cert=
+    \"configs/certs/cert.pem\"\n# key= \"configs/certs/key.pem\"\n\n[signal.jwt]\nenabled
+    = false \nkey_type = \"HMAC\"  # this selects the Signing method https://godoc.org/github.com/dgrijalva/jwt-go#SigningMethod\nkey
+    = \"1q2dGu5pzikcrECJgW3ADfXX3EsmoD99SYvSVCpDsJrAqxou5tUNbHPvkEFI4bTS\"\n\n[signal.svc]\nservices
+    = [\"rtc\", \"room\"]\n"
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: signal-config

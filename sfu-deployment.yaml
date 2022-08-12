@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert
+    kompose.version: 1.26.1 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: sfu
+  name: sfu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: sfu
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert
+        kompose.version: 1.26.1 (HEAD)
+      creationTimestamp: null
+      labels:
+        io.kompose.network/ionnet: "true"
+        io.kompose.service: sfu
+    spec:
+      containers:
+        - image: pionwebrtc/ion:latest-sfu
+          name: sfu
+          ports:
+            - containerPort: 5000
+              protocol: UDP
+            - containerPort: 3478
+          resources: {}
+          volumeMounts:
+            - mountPath: /configs/sfu.toml
+              name: sfu-claim0
+              subPath: sfu.toml
+      restartPolicy: Always
+      volumes:
+        - name: sfu-claim0
+          configMap:
+            name: sfu-config
+#          persistentVolumeClaim:
+#            claimName: sfu-claim0
+status: {}

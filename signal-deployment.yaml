@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert
+    kompose.version: 1.26.1 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: signal
+  name: signal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: signal
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert
+        kompose.version: 1.26.1 (HEAD)
+      creationTimestamp: null
+      labels:
+        io.kompose.network/ionnet: "true"
+        io.kompose.service: signal
+    spec:
+      containers:
+        - image: pionwebrtc/ion:latest-signal
+          name: signal
+          ports:
+            - containerPort: 5551
+          resources: {}
+          volumeMounts:
+            - mountPath: /configs/signal.toml
+              name: signal-claim0
+              subPath: signal.toml
+      restartPolicy: Always
+      volumes:
+        - name: signal-claim0
+          configMap:
+            name: signal-config
+status: {}

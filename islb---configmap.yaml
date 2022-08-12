@@ -1,0 +1,22 @@
+apiVersion: v1
+data:
+  islb.toml: |-
+    [global]
+    # data center id
+    dc = "dc1"
+
+    [log]
+    level = "info"
+
+    [nats]
+    url = "nats://nats:4222"
+
+
+    [redis]
+    addrs = ["redis:6379"]
+    password = ""
+    db = 0
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: islb-config
