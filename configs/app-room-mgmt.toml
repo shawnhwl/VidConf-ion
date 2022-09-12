@@ -1,0 +1,34 @@
+[global]
+# data center id
+dc = "dc1"
+
+[log]
+level = "info"
+# level = "debug"
+
+[nats]
+url = "nats://127.0.0.1:4222"
+
+[redis]
+addrs = [":6379"]
+password = ""
+db = 0
+
+[httpservice]
+# Polling interval for StartTime, EndTime and AnnounceTime
+pollInSeconds = 60
+# Sets the realm for http server
+realm = "ion"
+# The address the HTTP server will listen on.
+address = "0.0.0.0:7070"
+# Certs path to config tls/dtls
+# cert="path/to/cert.pem"
+# key="path/to/key.pem"
+
+[webapp]
+# The URL of the webapp
+url = "https://localhost:9090"
+
+[signal]
+# The addr for grpc signalling
+addr = "localhost:5551"

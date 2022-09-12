@@ -59,6 +59,25 @@ services:
     networks:
       - ionnet
 
+  app-room-mgmt:
+    image: howeli/vidconf-ion_app-room-mgmt:latest
+    build:
+      dockerfile: ./docker/app-room-mgmt.Dockerfile
+      context: .
+    volumes:
+      - "./configs/docker/app-room-mgmt.toml:/configs/app-room-mgmt.toml"
+    ports:
+      # Dev port
+      - 7070:7070
+    depends_on:
+      - nats
+      - redis
+      - islb
+      - app-room
+      - signal
+    networks:
+      - ionnet
+
   nats:
     image: nats
     ports:

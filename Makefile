@@ -18,6 +18,7 @@ core:
 
 app:
 	go build -o bin/app-room $(GO_LDFLAGS) apps/room/main.go
+	go build -o bin/app-room-mgmt $(GO_LDFLAGS) apps/room-mgmt/main.go
 
 clean:
 	rm -rf bin

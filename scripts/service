@@ -48,6 +48,9 @@ function start()
     if [[ "$SERVICE" == app-room ]]; then
         BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
     fi
+    if [[ "$SERVICE" == app-room-mgmt ]]; then
+        BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
+    fi
     cd $BUILD_PATH
     echo "go build -o $COMMAND"
     go build -o $COMMAND
@@ -111,7 +114,7 @@ if [[ "$ACTION" != "start" && "$ACTION" != "stop" && "$ACTION" != "status" && "$
     exit 1
 fi
 
-if [[ "$SERVICE" != "app-room" && "$SERVICE" != "signal" && "$SERVICE" != "islb" && "$SERVICE" != "sfu" ]]; then
+if [[ "$SERVICE" != "app-room-mgmt" && "$SERVICE" != "app-room" && "$SERVICE" != "signal" && "$SERVICE" != "islb" && "$SERVICE" != "sfu" ]]; then
     show_help
     exit 1
 fi
