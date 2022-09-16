@@ -15,20 +15,23 @@ import (
 )
 
 const (
-	ROOMS              string = "ROOMS"
-	MISS_START_TIME    string = "Missing Mandatory field 'startTime' in ISO9601 format"
-	MISS_END_TIME      string = "Missing Mandatory field 'endTime' in ISO9601 format"
-	MISS_ANNOUNCE_ID   string = "Missing Mandatory field 'announcements.announceId'"
-	MISS_ANNOUNCE_MSG  string = "Missing Mandatory non-empty string field 'announcements.message'"
-	MISS_ANNOUNCE_TIME string = "Missing Mandatory field 'announcements.relativeTimeInSeconds'"
-	MISS_ANNOUNCE_REL  string = "Missing Valid field 'announcements.relativeFrom' (accepts only: NULL|'start'|'end')"
-	DUP_ANNOUNCE_ID    string = "Forbidden duplication of 'announcements.announceId'"
+	DB_ROOMS string = "ROOMS"
+
+	MISS_START_TIME    string = "missing mandatory field 'startTime' in ISO9601 format"
+	MISS_END_TIME      string = "missing mandatory field 'endTime' in ISO9601 format"
+	MISS_ANNOUNCE_ID   string = "missing mandatory field 'announcements.announceId'"
+	MISS_ANNOUNCE_MSG  string = "missing mandatory non-empty string field 'announcements.message'"
+	MISS_ANNOUNCE_TIME string = "missing mandatory field 'announcements.relativeTimeInSeconds'"
+	MISS_ANNOUNCE_REL  string = "missing valid field 'announcements.relativeFrom' (accepts only: NULL|'start'|'end')"
+	DUP_ANNOUNCE_ID    string = "forbidden duplication of 'announcements.announceId'"
 
 	ANNOUNCEMENT_QUEUED string = "Queued"
 	ANNOUNCEMENT_SENT   string = "Sent"
 	ROOM_BOOKED         string = "Booked"
 	ROOM_STARTED        string = "Started"
 	ROOM_ENDED          string = "Ended"
+	FROM_START          string = "start"
+	FROM_END            string = "end"
 
 	SYSTEM_ID   string = "system"
 	SYSTEM_Name string = "PA System"
@@ -169,7 +172,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	roomJSON, _ = json.MarshalIndent(room, "", "    ")
 	log.Infof("%s", roomJSON)
 
-	dbRecords := s.redisDB.Get(ROOMS)
+	dbRecords := s.redisDB.Get(DB_ROOMS)
 	var rooms Rooms
 	if dbRecords != "" {
 		err = json.Unmarshal([]byte(dbRecords), &rooms)
@@ -186,16 +189,17 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(ROOMS, roomsJSON, 0)
+	s.redisDB.Set(DB_ROOMS, roomsJSON, 0)
 
-	log.Infof("posted room '%s':\n%s\nrooms:%s", roomId, s.redisDB.Get(roomId), s.redisDB.Get(ROOMS))
+	s.onChanges <- roomId
+	log.Infof("posted room '%s':\n%s\nrooms:%s", roomId, s.redisDB.Get(roomId), s.redisDB.Get(DB_ROOMS))
 	c.String(http.StatusOK, "%s?room=%s", s.conf.WebApp.Url, roomId)
 }
 
 func (s *RoomMgmtService) getRooms(c *gin.Context) {
 	log.Infof("GET /rooms")
 
-	dbRecords := s.redisDB.Get(ROOMS)
+	dbRecords := s.redisDB.Get(DB_ROOMS)
 	if dbRecords == "" {
 		c.String(http.StatusOK, "{\n    \"roomId\": []\n}")
 		return
@@ -252,8 +256,8 @@ func (s *RoomMgmtService) getRoomsByRoomid(c *gin.Context) {
 }
 
 func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
-	roomid := c.Param("roomid")
-	log.Infof("PATCH /rooms/%s", roomid)
+	roomId := c.Param("roomid")
+	log.Infof("PATCH /rooms/%s", roomId)
 
 	var patch_room Patch_Room
 	if err := c.ShouldBindJSON(&patch_room); err != nil {
@@ -269,10 +273,10 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(roomJSON))
 
-	dbRecords := s.redisDB.Get(roomid)
+	dbRecords := s.redisDB.Get(roomId)
 	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomid))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomid))
+		log.Warnf(s.roomNotFound(roomId))
+		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
 		return
 	}
 
@@ -296,7 +300,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomid, roomJSON, 0)
+	s.redisDB.Set(roomId, roomJSON, 0)
 	var get_room Get_Room
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
@@ -306,7 +310,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 	}
 
 	if get_room.Status == ROOM_STARTED {
-		get_room.Users = append(get_room.Users, s.getPeers(roomid)...)
+		get_room.Users = append(get_room.Users, s.getPeers(roomId)...)
 	}
 
 	roomsJSON, err := json.MarshalIndent(get_room, "", "    ")
@@ -316,13 +320,14 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	log.Infof("patched room:\n%s", s.redisDB.Get(roomid))
+	s.onChanges <- roomId
+	log.Infof("patched room:\n%s", s.redisDB.Get(roomId))
 	c.String(http.StatusOK, string(roomsJSON))
 }
 
 func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
-	roomid := c.Param("roomid")
-	log.Infof("DELETE /rooms/%s", roomid)
+	roomId := c.Param("roomid")
+	log.Infof("DELETE /rooms/%s", roomId)
 
 	var delete_room Delete_Room
 	if err := c.ShouldBindJSON(&delete_room); err != nil {
@@ -338,10 +343,10 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(roomJSON))
 
-	dbRecords := s.redisDB.Get(roomid)
+	dbRecords := s.redisDB.Get(roomId)
 	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomid))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomid))
+		log.Warnf(s.roomNotFound(roomId))
+		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
 		return
 	}
 
@@ -362,6 +367,8 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	room.EndTime = time.Now().Add(time.Second * time.Duration(timeLeftInSeconds))
 	if delete_room.Reason == nil {
 		room.EarlyEndReason = "session terminated"
+	} else if *delete_room.Reason == "" {
+		room.EarlyEndReason = "session terminated"
 	} else {
 		room.EarlyEndReason = *delete_room.Reason
 	}
@@ -371,21 +378,22 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomid, roomJSON, 0)
+	s.redisDB.Set(roomId, roomJSON, 0)
 
-	log.Infof("deleted room:\n%s", s.redisDB.Get(roomid))
-	c.String(http.StatusOK, "Ending roomId '%s' in %d minutes", roomid, timeLeftInSeconds/60)
+	s.onChanges <- roomId
+	log.Infof("deleted room:\n%s", s.redisDB.Get(roomId))
+	c.String(http.StatusOK, "Ending roomId '%s' in %d minutes", roomId, timeLeftInSeconds/60)
 }
 
 func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
-	roomid := c.Param("roomid")
-	userid := c.Param("userid")
-	log.Infof("DELETE /rooms/%s/users/%s", roomid, userid)
+	roomId := c.Param("roomid")
+	userId := c.Param("userid")
+	log.Infof("DELETE /rooms/%s/users/%s", roomId, userId)
 
-	dbRecords := s.redisDB.Get(roomid)
+	dbRecords := s.redisDB.Get(roomId)
 	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomid))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomid))
+		log.Warnf(s.roomNotFound(roomId))
+		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
 		return
 	}
 
@@ -398,11 +406,11 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 	}
 
 	if room.Status != ROOM_STARTED {
-		log.Warnf(s.roomNotStarted(roomid))
-		c.String(http.StatusBadRequest, s.roomNotStarted(roomid))
+		log.Warnf(s.roomNotStarted(roomId))
+		c.String(http.StatusBadRequest, s.roomNotStarted(roomId))
 		return
 	}
-	warn, err := s.kickUser(roomid, userid)
+	warn, err := s.kickUser(roomId, userId)
 	if err != nil {
 		log.Errorf(err.Error())
 		c.String(http.StatusInternalServerError, err.Error())
@@ -413,12 +421,12 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 		c.String(http.StatusBadRequest, warn.Error())
 		return
 	}
-	c.String(http.StatusOK, "Kicked userId '%s' from roomId '%s'", userid, roomid)
+	c.String(http.StatusOK, "Kicked userId '%s' from roomId '%s'", userId, roomId)
 }
 
 func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
-	roomid := c.Param("roomid")
-	log.Infof("PUT /rooms/%s/announcements", roomid)
+	roomId := c.Param("roomid")
+	log.Infof("PUT /rooms/%s/announcements", roomId)
 
 	var patch_room Patch_Room
 	if err := c.ShouldBindJSON(&patch_room); err != nil {
@@ -434,10 +442,10 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(roomJSON))
 
-	dbRecords := s.redisDB.Get(roomid)
+	dbRecords := s.redisDB.Get(roomId)
 	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomid))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomid))
+		log.Warnf(s.roomNotFound(roomId))
+		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
 		return
 	}
 
@@ -461,7 +469,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomid, roomJSON, 0)
+	s.redisDB.Set(roomId, roomJSON, 0)
 	var get_room Get_Room
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
@@ -471,7 +479,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	}
 
 	if get_room.Status == ROOM_STARTED {
-		get_room.Users = append(get_room.Users, s.getPeers(roomid)...)
+		get_room.Users = append(get_room.Users, s.getPeers(roomId)...)
 	}
 
 	roomsJSON, err := json.MarshalIndent(get_room, "", "    ")
@@ -481,13 +489,14 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	log.Infof("put announcements:\n%s", s.redisDB.Get(roomid))
+	s.onChanges <- roomId
+	log.Infof("put announcements:\n%s", s.redisDB.Get(roomId))
 	c.String(http.StatusOK, string(roomsJSON))
 }
 
 func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
-	roomid := c.Param("roomid")
-	log.Infof("DELETE /rooms/%s/announcements", roomid)
+	roomId := c.Param("roomid")
+	log.Infof("DELETE /rooms/%s/announcements", roomId)
 
 	var delete_announce Delete_Announcement
 	if err := c.ShouldBindJSON(&delete_announce); err != nil {
@@ -503,10 +512,10 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(announceHSON))
 
-	dbRecords := s.redisDB.Get(roomid)
+	dbRecords := s.redisDB.Get(roomId)
 	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomid))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomid))
+		log.Warnf(s.roomNotFound(roomId))
+		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
 		return
 	}
 
@@ -518,7 +527,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 	if len(room.Announcements) == 0 {
-		warnString := fmt.Sprintf("roomid '%s' has no announcements in database", roomid)
+		warnString := fmt.Sprintf("roomid '%s' has no announcements in database", roomId)
 		log.Warnf(warnString)
 		c.String(http.StatusBadRequest, warnString)
 		return
@@ -544,7 +553,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 				}
 			}
 			if !isFound {
-				warnString := fmt.Sprintf("roomid '%s' does not have announceId '%d' in database", &roomid, announceId)
+				warnString := fmt.Sprintf("roomid '%s' does not have announceId '%d' in database", roomId, announceId)
 				log.Warnf(warnString)
 				c.String(http.StatusBadRequest, warnString)
 				return
@@ -560,7 +569,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomid, roomJSON, 0)
+	s.redisDB.Set(roomId, roomJSON, 0)
 	var get_room Get_Room
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
@@ -570,7 +579,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	}
 
 	if get_room.Status == ROOM_STARTED {
-		get_room.Users = append(get_room.Users, s.getPeers(roomid)...)
+		get_room.Users = append(get_room.Users, s.getPeers(roomId)...)
 	}
 
 	roomsJSON, err := json.MarshalIndent(get_room, "", "    ")
@@ -580,7 +589,8 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	log.Infof("deleted announcements:\n%s", s.redisDB.Get(roomid))
+	s.onChanges <- roomId
+	log.Infof("deleted announcements:\n%s", s.redisDB.Get(roomId))
 	c.String(http.StatusOK, string(roomsJSON))
 }
 
@@ -656,12 +666,12 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room) error {
 		}
 		announcement.Message = *patch.Message
 		if patch.RelativeFrom != nil &&
-			*patch.RelativeFrom != "start" &&
-			*patch.RelativeFrom != "end" {
+			*patch.RelativeFrom != FROM_START &&
+			*patch.RelativeFrom != FROM_END {
 			return errors.New(MISS_ANNOUNCE_REL)
 		}
 		if patch.RelativeFrom == nil {
-			announcement.RelativeFrom = "end"
+			announcement.RelativeFrom = FROM_END
 		} else {
 			announcement.RelativeFrom = *patch.RelativeFrom
 		}
@@ -697,12 +707,12 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room) err
 		}
 		announcement.Message = *patch.Message
 		if patch.RelativeFrom != nil &&
-			*patch.RelativeFrom != "start" &&
-			*patch.RelativeFrom != "end" {
+			*patch.RelativeFrom != FROM_START &&
+			*patch.RelativeFrom != FROM_END {
 			return errors.New(MISS_ANNOUNCE_REL)
 		}
 		if patch.RelativeFrom == nil {
-			announcement.RelativeFrom = "end"
+			announcement.RelativeFrom = FROM_END
 		} else {
 			announcement.RelativeFrom = *patch.RelativeFrom
 		}
@@ -736,110 +746,38 @@ func removeSlice[T any](slice []T, id int) []T {
 	return slice[:len(slice)-1]
 }
 
-func (s *RoomMgmtService) createRoom(roomid string) error {
-	err := s.roomService.CreateRoom(sdk.RoomInfo{Sid: roomid})
-	if err != nil {
-		output := fmt.Sprintf("Error creating room '%s' : %v", roomid, err)
-		log.Errorf(output)
-		return errors.New(output)
-	}
-	log.Infof("Created room '%s'", roomid)
-	return nil
+type Terminations struct {
+	timeTick time.Time
+	reason   string
 }
 
-func (s *RoomMgmtService) messageRoom(roomid, msg string, userIds []string) error {
-	err := s.createRoom(roomid)
-	if err != nil {
-		return err
-	}
-	if len(userIds) == 0 {
-		err = s.roomService.SendMessage(roomid, SYSTEM_ID, "all", map[string]interface{}{"Annoucement": msg})
-		if err != nil {
-			output := fmt.Sprintf("Error sending message '%s' to room '%s' : %v", msg, roomid, err)
-			log.Errorf(output)
-			return errors.New(output)
-		}
-	} else {
-		err = nil
-		for _, userid := range userIds {
-			err1 := s.roomService.SendMessage(roomid, SYSTEM_ID, userid, map[string]interface{}{"Annoucement": msg})
-			if err1 != nil {
-				err = err1
-			}
-		}
-		if err != nil {
-			output := fmt.Sprintf("Error sending message '%s' to room '%s' : %v", msg, roomid, err)
-			log.Errorf(output)
-			return errors.New(output)
-		}
-	}
-	log.Infof("Prompted '%s' to room '%s' users '%v'", msg, roomid, userIds)
-	return nil
+type Announcements struct {
+	timeTick time.Time
+	message  string
+	userId   []string
 }
 
-func (s *RoomMgmtService) endRoom(roomid, reason string) error {
-	err := s.createRoom(roomid)
-	if err != nil {
-		return err
-	}
-	peerinfo := s.roomService.GetPeers(roomid)
-	for _, peer := range peerinfo {
-		s.kickUser(roomid, peer.Uid)
-	}
-	err = s.roomService.EndRoom(roomid, reason, true)
-	if err != nil {
-		output := fmt.Sprintf("Error ending room '%s' : %v", roomid, err)
-		log.Errorf(output)
-		return errors.New((output))
-	}
-	log.Infof("Ended room '%s'", roomid)
-	return nil
-}
-
-func (s *RoomMgmtService) getPeers(roomid string) []User {
-	peers := s.roomService.GetPeers(roomid)
-	log.Infof("%v", peers)
-
-	users := make([]User, 0)
-	for _, peer := range peers {
-		if peer.Uid == SYSTEM_ID {
-			continue
-		}
-		var user User
-		user.UserId = peer.Uid
-		user.UserName = peer.DisplayName
-		users = append(users, user)
-	}
-	return users
-}
-
-func (s *RoomMgmtService) kickUser(roomid, userid string) (error, error) {
-	peerinfo := s.roomService.GetPeers(roomid)
-	for _, peer := range peerinfo {
-		if userid == peer.Uid {
-			err := s.roomService.RemovePeer(roomid, peer.Uid)
-			if err != nil {
-				output := fmt.Sprintf("Error kicking '%s' from room '%s' : %v", userid, roomid, err)
-				log.Errorf(output)
-				return nil, errors.New(output)
-			}
-			log.Infof("Kicked '%s' from room '%s'", userid, roomid)
-			return nil, nil
-		}
-	}
-	output := fmt.Sprintf("userId '%s' not found in roomId '%s'", userid, roomid)
-	log.Warnf(output)
-	return errors.New(output), nil
+type AnnounceKey struct {
+	roomId     string
+	announceId int64
 }
 
 type RoomMgmtService struct {
-	// Config
 	conf Config
-	// common
-	timeLive    string
-	timeReady   string
-	roomService *sdk.Room
-	redisDB     *db.Redis
+
+	timeLive     string
+	timeReady    string
+	roomService  *sdk.Room
+	redisDB      *db.Redis
+	onChanges    chan string
+	pollInterval time.Duration
+
+	roomStarts       map[string]time.Time
+	roomStartKeys    []string
+	roomEnds         map[string]Terminations
+	roomEndKeys      []string
+	announcements    map[AnnounceKey]Announcements
+	announcementKeys []AnnounceKey
 }
 
 func NewRoomMgmtService(config Config) *RoomMgmtService {
@@ -861,18 +799,23 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	timeReady := time.Now().Format(time.RFC3339)
 
 	s := &RoomMgmtService{
-		conf:        config,
-		timeLive:    timeLive,
-		timeReady:   timeReady,
-		roomService: roomService,
-		redisDB:     redis_db,
+		conf:         config,
+		timeLive:     timeLive,
+		timeReady:    timeReady,
+		roomService:  roomService,
+		redisDB:      redis_db,
+		onChanges:    make(chan string, 2048),
+		pollInterval: time.Duration(config.Http.PollInSeconds) * time.Second,
 	}
+	go s.RoomMgmtSentinel()
+	<-s.onChanges
 	go s.start()
 	return s
 }
 
 func (s *RoomMgmtService) start() {
 	defer s.redisDB.Close()
+	defer close(s.onChanges)
 
 	log.Infof("--- Starting HTTP-API Server ---")
 	gin.SetMode(gin.ReleaseMode)
@@ -911,19 +854,21 @@ func (s *RoomMgmtService) testAPI(router *gin.Engine) {
 		}
 		c.String(http.StatusOK, "POST /rooms/%s", roomid)
 	})
-	router.POST("/rooms/:roomid/messages/:message/users/:userid", func(c *gin.Context) {
+	router.POST("/rooms/:roomid/messages/:message/:from/:to", func(c *gin.Context) {
 		roomid := c.Param("roomid")
 		message := c.Param("message")
-		userid := c.Param("userid")
-		log.Infof("POST /rooms/%s/messages/%s/users/%s", roomid, message, userid)
+		from := c.Param("from")
+		to := c.Param("to")
+		log.Infof("POST /rooms/%s/messages/%s/users/%s", roomid, message, to)
 		userids := make([]string, 0)
-		userids = append(userids, userid)
-		err := s.messageRoom(roomid, message, userids)
+		userids = append(userids, to)
+		err := s.postMessage(roomid, message, from, userids)
 		if err != nil {
-			c.String(http.StatusInternalServerError, "POST /rooms/%s/messages/%s/users/%s [ERR]%s", roomid, message, userid, err.Error())
+			c.String(http.StatusInternalServerError,
+				"POST /rooms/%s/messages/%s/%s/%s [ERR]%s", roomid, message, from, to, err.Error())
 			return
 		}
-		c.String(http.StatusOK, "POST /rooms/%s/messages/%s/users/%s", roomid, message, userid)
+		c.String(http.StatusOK, "POST /rooms/%s/messages/%s/%s/%s", roomid, message, from, to)
 	})
 	router.DELETE("/rooms/:roomid/reasons/:reason", func(c *gin.Context) {
 		roomid := c.Param("roomid")

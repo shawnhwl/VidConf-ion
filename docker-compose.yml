@@ -78,6 +78,31 @@ services:
     networks:
       - ionnet
 
+  web:
+    image: howeli/vidconf-ion-app-web:latest
+    build:
+      dockerfile: ../VidConf-ion-app-web/Dockerfile
+      context: ../VidConf-ion-app-web
+    volumes:
+      # Dev caddy file
+      - "../VidConf-ion-app-web/Caddyfile:/etc/caddy/Caddyfile"
+      - "caddy:/data"
+    ports:
+      # Dev port
+      - 9090:9090
+    depends_on:
+      - nats
+      - redis
+      - islb
+      - app-room
+      - signal
+      - app-room-mgmt
+    networks:
+      - ionnet
+    environment:
+    - WWW_URL
+    - ADMIN_EMAIL
+
   nats:
     image: nats
     ports:
@@ -96,3 +121,6 @@ networks:
   ionnet:
     name: ionnet
     driver: bridge
+
+volumes:
+  caddy:
