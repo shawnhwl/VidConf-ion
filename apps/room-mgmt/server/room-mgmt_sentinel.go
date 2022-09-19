@@ -32,37 +32,24 @@ func (s *RoomMgmtService) createRoom(roomid string) error {
 	return nil
 }
 
-func (s *RoomMgmtService) postMessage(roomid, msg, from string, to []string) error {
+func (s *RoomMgmtService) postMessage(roomid, message string, toid []string) error {
 	peerinfo := s.roomService.GetPeers(roomid)
-	if len(peerinfo) < 2 {
-		output := fmt.Sprintf("Roomid '%s' has less than 2 users", roomid)
+	if len(peerinfo) == 0 {
+		output := fmt.Sprintf("Roomid '%s' is empty", roomid)
 		log.Errorf(output)
 		return errors.New(output)
 	}
-	var sendername string
-	hasSender := false
-	for _, peer := range peerinfo {
-		if peer.Uid == from {
-			sendername = peer.DisplayName
-			hasSender = true
-		}
-	}
-	payload := map[string]interface{}{"uid": from, "name": sendername, "text": msg}
-	if !hasSender {
-		output := fmt.Sprintf("Roomid '%s' missing senderid '%s'", roomid, from)
-		log.Errorf(output)
-		return errors.New(output)
-	}
-	if len(to) == 0 {
-		err := s.roomService.SendMessage(roomid, from, "all", map[string]interface{}{"msg": payload})
+	payload := map[string]interface{}{"uid": SYSTEM_ID, "name": SYSTEM_NAME, "text": message}
+	if len(toid) == 0 {
+		err := s.roomService.SendMessage(roomid, SYSTEM_ID, "all", map[string]interface{}{"msg": payload})
 		if err != nil {
-			output := fmt.Sprintf("Error sending message '%s' to roomid '%s' : %v", msg, roomid, err)
+			output := fmt.Sprintf("Error sending message '%s' to all users in roomid '%s' : %v", message, roomid, err)
 			log.Errorf(output)
 			return errors.New(output)
 		}
 	} else {
 		var err error
-		for _, userid := range to {
+		for _, userid := range toid {
 			hasRecipient := false
 			for _, peer := range peerinfo {
 				if peer.Uid == userid {
@@ -75,18 +62,18 @@ func (s *RoomMgmtService) postMessage(roomid, msg, from string, to []string) err
 				err = errors.New(output)
 				continue
 			}
-			err1 := s.roomService.SendMessage(roomid, from, userid, map[string]interface{}{"msg": payload})
+			err1 := s.roomService.SendMessage(roomid, SYSTEM_ID, userid, map[string]interface{}{"msg": payload})
 			if err1 != nil {
 				err = err1
 			}
 		}
 		if err != nil {
-			output := fmt.Sprintf("Error sending message '%s' to roomid '%s' : %v", msg, roomid, err)
+			output := fmt.Sprintf("Error sending message '%s' to roomid '%s' : %v", message, roomid, err)
 			log.Errorf(output)
 			return errors.New(output)
 		}
 	}
-	log.Infof("Sent message '%s' to roomid '%s' users '%v'", msg, roomid, to)
+	log.Infof("Sent message '%s' to users '%v' in roomid '%s'", message, toid, roomid)
 	return nil
 }
 
@@ -186,29 +173,31 @@ func (s *RoomMgmtService) initTimings() {
 		return
 	}
 
-	toDelete := make([]int, 0)
+	toDeleteId := make([]int, 0)
 	for id, roomid := range rooms.RoomIds {
 		dbRecords := s.redisDB.Get(roomid)
 		if dbRecords == "" {
 			log.Errorf("missing roomid '%s' records in database", roomid)
-			toDelete = append(toDelete, id)
+			toDeleteId = append(toDeleteId, id)
 			continue
 		}
 		var roomInfo Room
 		err := json.Unmarshal([]byte(dbRecords), &roomInfo)
 		if err != nil {
 			log.Errorf("could not decode roomid '%s' records: %s", roomid, err)
-			toDelete = append(toDelete, id)
+			toDeleteId = append(toDeleteId, id)
 			continue
 		}
 	}
-	for _, id := range toDelete {
-		rooms.RoomIds = removeSlice(rooms.RoomIds, id)
-	}
-	if len(toDelete) != 0 {
+	rooms.RoomIds = deleteSlices(rooms.RoomIds, toDeleteId)
+
+	if len(toDeleteId) != 0 {
 		roomsJSON, err := json.Marshal(rooms)
 		if err == nil {
-			s.redisDB.Set(DB_ROOMS, roomsJSON, 0)
+			err = s.redisDB.Set(DB_ROOMS, roomsJSON, 0)
+			if err != nil {
+				log.Errorf("Error writing to Database: %s", err)
+			}
 		}
 	}
 
@@ -229,19 +218,23 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 
 	if roomInfo.Status == ROOM_ENDED {
 		delete(s.roomStarts, roomid)
+		toDeleteId := make([]int, 0)
 		for id, key := range s.roomStartKeys {
 			if key == roomid {
-				removeSlice(s.roomStartKeys, id)
+				toDeleteId = append(toDeleteId, id)
 				break
 			}
 		}
+		s.roomStartKeys = deleteSlices(s.roomStartKeys, toDeleteId)
 		delete(s.roomEnds, roomid)
+		toDeleteId = make([]int, 0)
 		for id, key := range s.roomEndKeys {
 			if key == roomid {
-				removeSlice(s.roomEndKeys, id)
+				toDeleteId = append(toDeleteId, id)
 				break
 			}
 		}
+		s.roomEndKeys = deleteSlices(s.roomEndKeys, toDeleteId)
 		s.deleteAnnouncementsByRoom(roomid)
 		return
 	}
@@ -250,12 +243,14 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		s.roomStarts[roomid] = roomInfo.StartTime
 	} else {
 		delete(s.roomStarts, roomid)
+		toDeleteId := make([]int, 0)
 		for id, key := range s.roomStartKeys {
 			if key == roomid {
-				removeSlice(s.roomStartKeys, id)
+				toDeleteId = append(toDeleteId, id)
 				break
 			}
 		}
+		s.roomStartKeys = deleteSlices(s.roomStartKeys, toDeleteId)
 	}
 	if len(roomInfo.Announcements) == 0 {
 		s.deleteAnnouncementsByRoom(roomid)
@@ -316,9 +311,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoom(roomid string) {
 	for _, announcekey := range toDelete {
 		delete(s.announcements, announcekey)
 	}
-	for _, id := range toDeleteId {
-		removeSlice(s.announcementKeys, id)
-	}
+	s.announcementKeys = deleteSlices(s.announcementKeys, toDeleteId)
 }
 
 func (s *RoomMgmtService) sortTimes() {
@@ -347,19 +340,105 @@ func (s *RoomMgmtService) sortTimes() {
 	})
 }
 
+func (s *RoomMgmtService) startRoomStatus(roomId string) {
+	dbRecords := s.redisDB.Get(roomId)
+	if dbRecords == "" {
+		log.Warnf(s.roomNotFound(roomId))
+		return
+	}
+
+	var room Room
+	err := json.Unmarshal([]byte(dbRecords), &room)
+	if err != nil {
+		log.Errorf("could not decode booking records: %s", err)
+		return
+	}
+
+	room.Status = ROOM_STARTED
+	roomJSON, err := json.Marshal(room)
+	if err != nil {
+		log.Errorf("could not encode room to JSON: %s", err)
+		return
+	}
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
+}
+
+func (s *RoomMgmtService) endRoomStatus(roomId string) {
+	dbRecords := s.redisDB.Get(roomId)
+	if dbRecords == "" {
+		log.Warnf(s.roomNotFound(roomId))
+		return
+	}
+
+	var room Room
+	err := json.Unmarshal([]byte(dbRecords), &room)
+	if err != nil {
+		log.Errorf("could not decode booking records: %s", err)
+		return
+	}
+
+	room.Status = ROOM_ENDED
+	roomJSON, err := json.Marshal(room)
+	if err != nil {
+		log.Errorf("could not encode room to JSON: %s", err)
+		return
+	}
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
+}
+
+func (s *RoomMgmtService) sendAnnouncementStatus(roomId string, announceId int64) {
+	dbRecords := s.redisDB.Get(roomId)
+	if dbRecords == "" {
+		log.Warnf(s.roomNotFound(roomId))
+		return
+	}
+
+	var room Room
+	err := json.Unmarshal([]byte(dbRecords), &room)
+	if err != nil {
+		log.Errorf("could not decode booking records: %s", err)
+		return
+	}
+
+	for id := range room.Announcements {
+		if room.Announcements[id].AnnounceId == announceId {
+			room.Announcements[id].Status = ANNOUNCEMENT_SENT
+			break
+		}
+	}
+	roomJSON, err := json.Marshal(room)
+	if err != nil {
+		log.Errorf("could not encode room to JSON: %s", err)
+		return
+	}
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
+}
+
 func (s *RoomMgmtService) startRooms() {
 	toDeleteId := make([]int, 0)
 	for id, key := range s.roomStartKeys {
 		if s.roomStarts[key].After(time.Now()) {
 			break
 		}
+		log.Infof("startRoom %v, %v", key, s.roomStarts[key])
 		go s.createRoom(key)
+		go s.startRoomStatus(key)
 		delete(s.roomStarts, key)
 		toDeleteId = append(toDeleteId, id)
 	}
-	for _, id := range toDeleteId {
-		removeSlice(s.roomStartKeys, id)
-	}
+	s.roomStartKeys = deleteSlices(s.roomStartKeys, toDeleteId)
 }
 
 func (s *RoomMgmtService) endRooms() {
@@ -368,13 +447,13 @@ func (s *RoomMgmtService) endRooms() {
 		if s.roomEnds[key].timeTick.After(time.Now()) {
 			break
 		}
+		log.Infof("endRoom %v, %v", key, s.roomEnds[key])
 		go s.endRoom(key, s.roomEnds[key].reason)
+		go s.endRoomStatus(key)
 		delete(s.roomEnds, key)
 		toDeleteId = append(toDeleteId, id)
 	}
-	for _, id := range toDeleteId {
-		removeSlice(s.roomEndKeys, id)
-	}
+	s.roomEndKeys = deleteSlices(s.roomEndKeys, toDeleteId)
 }
 
 func (s *RoomMgmtService) sendAnnouncements() {
@@ -383,11 +462,11 @@ func (s *RoomMgmtService) sendAnnouncements() {
 		if s.announcements[key].timeTick.After(time.Now()) {
 			break
 		}
-		go s.postMessage(key.roomId, s.announcements[key].message, SYSTEM_ID, s.announcements[key].userId)
+		log.Infof("sendAnnouncements %v, %v", key, s.announcements[key])
+		go s.postMessage(key.roomId, s.announcements[key].message, s.announcements[key].userId)
+		go s.sendAnnouncementStatus(key.roomId, key.announceId)
 		delete(s.announcements, key)
 		toDeleteId = append(toDeleteId, id)
 	}
-	for _, id := range toDeleteId {
-		removeSlice(s.announcementKeys, id)
-	}
+	s.announcementKeys = deleteSlices(s.announcementKeys, toDeleteId)
 }

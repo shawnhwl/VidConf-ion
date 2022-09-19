@@ -34,7 +34,7 @@ const (
 	FROM_END            string = "end"
 
 	SYSTEM_ID   string = "system"
-	SYSTEM_Name string = "PA System"
+	SYSTEM_NAME string = "PA System"
 )
 
 type Announcement struct {
@@ -167,7 +167,11 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		return
 	}
 
-	s.redisDB.Set(roomId, roomJSON, 0)
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
 
 	roomJSON, _ = json.MarshalIndent(room, "", "    ")
 	log.Infof("%s", roomJSON)
@@ -189,7 +193,11 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(DB_ROOMS, roomsJSON, 0)
+	err = s.redisDB.Set(DB_ROOMS, roomsJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
 
 	s.onChanges <- roomId
 	log.Infof("posted room '%s':\n%s\nrooms:%s", roomId, s.redisDB.Get(roomId), s.redisDB.Get(DB_ROOMS))
@@ -300,7 +308,12 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomId, roomJSON, 0)
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
+
 	var get_room Get_Room
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
@@ -378,7 +391,11 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomId, roomJSON, 0)
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
 
 	s.onChanges <- roomId
 	log.Infof("deleted room:\n%s", s.redisDB.Get(roomId))
@@ -469,7 +486,12 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomId, roomJSON, 0)
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
+
 	var get_room Get_Room
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
@@ -542,12 +564,12 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	if isDeleteAll {
 		room.Announcements = make([]Announcement, 0)
 	} else {
-		toDelete := make([]int, 0)
+		toDeleteId := make([]int, 0)
 		for _, announceId := range delete_announce.AnnounceId {
 			isFound := false
 			for id, announcements := range room.Announcements {
 				if announcements.AnnounceId == announceId {
-					toDelete = append(toDelete, id)
+					toDeleteId = append(toDeleteId, id)
 					isFound = true
 					break
 				}
@@ -559,9 +581,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 				return
 			}
 		}
-		for _, id := range toDelete {
-			room.Announcements = removeSlice(room.Announcements, id)
-		}
+		room.Announcements = deleteSlices(room.Announcements, toDeleteId)
 	}
 	roomJSON, err := json.Marshal(room)
 	if err != nil {
@@ -569,7 +589,12 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "JSON encoding error")
 		return
 	}
-	s.redisDB.Set(roomId, roomJSON, 0)
+	err = s.redisDB.Set(roomId, roomJSON, 0)
+	if err != nil {
+		log.Errorf("Error writing to Database: %s", err)
+		return
+	}
+
 	var get_room Get_Room
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
@@ -741,7 +766,17 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room) err
 	return nil
 }
 
+func deleteSlices[T any](slice []T, ids []int) []T {
+	for id := len(ids) - 1; id >= 0; id-- {
+		slice = removeSlice(slice, ids[id])
+	}
+	return slice
+}
+
 func removeSlice[T any](slice []T, id int) []T {
+	if id >= len(slice) {
+		return slice
+	}
 	copy(slice[id:], slice[id+1:])
 	return slice[:len(slice)-1]
 }
@@ -843,7 +878,6 @@ func (s *RoomMgmtService) start() {
 }
 
 func (s *RoomMgmtService) testAPI(router *gin.Engine) {
-	// tests
 	router.POST("/rooms/:roomid", func(c *gin.Context) {
 		roomid := c.Param("roomid")
 		log.Infof("POST /rooms/%s/", roomid)
@@ -854,21 +888,22 @@ func (s *RoomMgmtService) testAPI(router *gin.Engine) {
 		}
 		c.String(http.StatusOK, "POST /rooms/%s", roomid)
 	})
-	router.POST("/rooms/:roomid/messages/:message/:from/:to", func(c *gin.Context) {
+	router.POST("/rooms/:roomid/:message/:toid", func(c *gin.Context) {
 		roomid := c.Param("roomid")
 		message := c.Param("message")
-		from := c.Param("from")
-		to := c.Param("to")
-		log.Infof("POST /rooms/%s/messages/%s/users/%s", roomid, message, to)
+		toid := c.Param("toid")
+		log.Infof("POST /rooms/%s/%s/%s", roomid, message, toid)
 		userids := make([]string, 0)
-		userids = append(userids, to)
-		err := s.postMessage(roomid, message, from, userids)
+		if toid != "all" {
+			userids = append(userids, toid)
+		}
+		err := s.postMessage(roomid, message, userids)
 		if err != nil {
 			c.String(http.StatusInternalServerError,
-				"POST /rooms/%s/messages/%s/%s/%s [ERR]%s", roomid, message, from, to, err.Error())
+				"POST /rooms/%s/%s/%s", roomid, message, toid, err.Error())
 			return
 		}
-		c.String(http.StatusOK, "POST /rooms/%s/messages/%s/%s/%s", roomid, message, from, to)
+		c.String(http.StatusOK, "POST /rooms/%s/%s/%s", roomid, message, toid)
 	})
 	router.DELETE("/rooms/:roomid/reasons/:reason", func(c *gin.Context) {
 		roomid := c.Param("roomid")
