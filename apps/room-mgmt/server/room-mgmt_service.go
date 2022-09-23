@@ -815,14 +815,14 @@ type AnnounceKey struct {
 type RoomMgmtService struct {
 	conf Config
 
-	timeLive     string
-	timeReady    string
-	roomService  *sdk.Room
-	redisDB      *db.Redis
-	onChanges    chan string
-	pollInterval time.Duration
-	systemId     string
-	systemName   string
+	timeLive       string
+	timeReady      string
+	roomService    *sdk.Room
+	redisDB        *db.Redis
+	onChanges      chan string
+	pollInterval   time.Duration
+	systemUid      string
+	systemUsername string
 
 	roomStarts       map[string]time.Time
 	roomStartKeys    []string
@@ -851,15 +851,15 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	timeReady := time.Now().Format(time.RFC3339)
 
 	s := &RoomMgmtService{
-		conf:         config,
-		timeLive:     timeLive,
-		timeReady:    timeReady,
-		roomService:  roomService,
-		redisDB:      redis_db,
-		onChanges:    make(chan string, 2048),
-		pollInterval: time.Duration(config.RoomMgmt.PollInSeconds) * time.Second,
-		systemId:     config.RoomMgmt.SystemId,
-		systemName:   config.RoomMgmt.SystemName,
+		conf:           config,
+		timeLive:       timeLive,
+		timeReady:      timeReady,
+		roomService:    roomService,
+		redisDB:        redis_db,
+		onChanges:      make(chan string, 2048),
+		pollInterval:   time.Duration(config.RoomMgmt.PollInSeconds) * time.Second,
+		systemUid:      config.RoomMgmt.SystemUid,
+		systemUsername: config.RoomMgmt.SystemUsername,
 	}
 	go s.RoomMgmtSentinel()
 	<-s.onChanges

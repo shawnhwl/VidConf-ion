@@ -30,12 +30,12 @@ type NatsConf struct {
 }
 
 type RoomMgmtConf struct {
-	PollInSeconds int    `mapstructure:"pollInSeconds"`
-	Addr          string `mapstructure:"address"`
-	SystemId      string `mapstructure:"system_userid"`
-	SystemName    string `mapstructure:"system_username"`
-	Cert          string `mapstructure:"cert"`
-	Key           string `mapstructure:"key"`
+	PollInSeconds  int    `mapstructure:"pollInSeconds"`
+	Addr           string `mapstructure:"address"`
+	SystemUid      string `mapstructure:"system_userid"`
+	SystemUsername string `mapstructure:"system_username"`
+	Cert           string `mapstructure:"cert"`
+	Key            string `mapstructure:"key"`
 }
 
 type WebAppConf struct {

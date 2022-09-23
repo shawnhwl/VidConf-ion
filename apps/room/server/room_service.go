@@ -19,17 +19,19 @@ var (
 
 type RoomService struct {
 	room.UnimplementedRoomServiceServer
-	roomLock sync.RWMutex
-	rooms    map[string]*Room
-	closed   chan struct{}
-	redis    *db.Redis
+	roomLock  sync.RWMutex
+	rooms     map[string]*Room
+	closed    chan struct{}
+	redis     *db.Redis
+	systemUid string
 }
 
-func NewRoomService(config db.Config) *RoomService {
+func NewRoomService(systemUid string, config db.Config) *RoomService {
 	s := &RoomService{
-		rooms:  make(map[string]*Room),
-		closed: make(chan struct{}),
-		redis:  db.NewRedis(config),
+		rooms:     make(map[string]*Room),
+		closed:    make(chan struct{}),
+		redis:     db.NewRedis(config),
+		systemUid: systemUid,
 	}
 	go s.stat()
 	return s
@@ -484,7 +486,7 @@ func (s *RoomService) createRoom(sid string) *Room {
 	if r := s.rooms[sid]; r != nil {
 		return r
 	}
-	r := newRoom(sid, s.redis)
+	r := newRoom(sid, s.systemUid, s.redis)
 	s.rooms[sid] = r
 	return r
 }

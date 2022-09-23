@@ -39,22 +39,16 @@ func (s *RoomMgmtService) postMessage(roomid, message string, toid []string) err
 		log.Errorf(output)
 		return errors.New(output)
 	}
-<<<<<<< HEAD
 	payload := map[string]interface{}{
 		"msg": map[string]interface{}{
-			"uid":       s.systemId,
-			"name":      s.systemName,
+			"uid":       s.systemUid,
+			"name":      s.systemUsername,
 			"text":      message,
 			"timestamp": time.Now().Format(time.RFC3339),
 		},
 	}
 	if len(toid) == 0 {
-		err := s.roomService.SendMessage(roomid, s.systemId, "all", payload)
-=======
-	payload := map[string]interface{}{"uid": s.systemId, "name": s.systemName, "text": message}
-	if len(toid) == 0 {
-		err := s.roomService.SendMessage(roomid, s.systemId, "all", map[string]interface{}{"msg": payload})
->>>>>>> f6b18328602e76fb75819a5125d44bcc71283fbb
+		err := s.roomService.SendMessage(roomid, s.systemUid, "all", payload)
 		if err != nil {
 			output := fmt.Sprintf("Error sending message '%s' to all users in roomid '%s' : %v", message, roomid, err)
 			log.Errorf(output)
@@ -75,11 +69,7 @@ func (s *RoomMgmtService) postMessage(roomid, message string, toid []string) err
 				err = errors.New(output)
 				continue
 			}
-<<<<<<< HEAD
-			err1 := s.roomService.SendMessage(roomid, s.systemId, userid, payload)
-=======
-			err1 := s.roomService.SendMessage(roomid, s.systemId, userid, map[string]interface{}{"msg": payload})
->>>>>>> f6b18328602e76fb75819a5125d44bcc71283fbb
+			err1 := s.roomService.SendMessage(roomid, s.systemUid, userid, payload)
 			if err1 != nil {
 				err = err1
 			}
@@ -122,7 +112,7 @@ func (s *RoomMgmtService) getPeers(roomid string) []User {
 
 	users := make([]User, 0)
 	for _, peer := range peers {
-		if peer.Uid == s.systemId {
+		if peer.Uid == s.systemUid {
 			continue
 		}
 		var user User

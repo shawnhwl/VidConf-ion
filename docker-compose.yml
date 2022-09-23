@@ -46,7 +46,7 @@ services:
       - ionnet
 
   app-room:
-    image: pionwebrtc/ion:latest-app-room
+    image: howeli/vidconf-ion_app-room:latest
     build:
       dockerfile: ./docker/app-room.Dockerfile
       context: .

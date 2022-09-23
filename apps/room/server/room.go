@@ -34,13 +34,18 @@ type natsConf struct {
 	URL string `mapstructure:"url"`
 }
 
+type RoomMgmtConf struct {
+	SystemUid string `mapstructure:"system_userid"`
+}
+
 // Config for room node
 type Config struct {
 	runner.ConfigBase
-	Global global    `mapstructure:"global"`
-	Log    logConf   `mapstructure:"log"`
-	Nats   natsConf  `mapstructure:"nats"`
-	Redis  db.Config `mapstructure:"redis"`
+	Global   global       `mapstructure:"global"`
+	Log      logConf      `mapstructure:"log"`
+	Nats     natsConf     `mapstructure:"nats"`
+	Redis    db.Config    `mapstructure:"redis"`
+	RoomMgmt RoomMgmtConf `mapstructure:"roommgmt"`
 }
 
 func unmarshal(rawVal interface{}) error {
@@ -82,11 +87,12 @@ func (c *Config) Load(file string) error {
 // Room represents a Room which manage peers
 type Room struct {
 	sync.RWMutex
-	sid    string
-	peers  map[string]*Peer
-	info   *room.Room
-	update time.Time
-	redis  *db.Redis
+	sid       string
+	peers     map[string]*Peer
+	info      *room.Room
+	update    time.Time
+	redis     *db.Redis
+	systemUid string
 }
 
 type RoomServer struct {
@@ -141,7 +147,7 @@ func (r *RoomServer) StartGRPC(registrar grpc.ServiceRegistrar) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = nil
-	r.RoomService = *NewRoomService(r.conf.Redis)
+	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid, r.conf.Redis)
 	log.Infof("NewRoomService r.conf.Redis=%+v r.redis=%+v", r.conf.Redis, r.redis)
 	r.RoomSignalService = *NewRoomSignalService(&r.RoomService)
 
@@ -171,7 +177,7 @@ func (r *RoomServer) Start() error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.NatsConn()
-	r.RoomService = *NewRoomService(r.conf.Redis)
+	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid, r.conf.Redis)
 	log.Infof("NewRoomService r.conf.Redis=%+v r.redis=%+v", r.conf.Redis, r.redis)
 	r.RoomSignalService = *NewRoomSignalService(&r.RoomService)
 
@@ -218,12 +224,13 @@ func (s *RoomServer) Close() {
 }
 
 // newRoom creates a new room instance
-func newRoom(sid string, redis *db.Redis) *Room {
+func newRoom(sid, systemUid string, redis *db.Redis) *Room {
 	r := &Room{
-		sid:    sid,
-		peers:  make(map[string]*Peer),
-		update: time.Now(),
-		redis:  redis,
+		sid:       sid,
+		peers:     make(map[string]*Peer),
+		update:    time.Now(),
+		redis:     redis,
+		systemUid: systemUid,
 	}
 	return r
 }
@@ -354,6 +361,20 @@ func (r *Room) sendMessage(msg *room.Message) {
 	dtype := msg.Type
 	data := msg.Payload
 	log.Debugf("Room.onMessage %v => %v, type: %v, data: %v", from, to, dtype, data)
+
+	isParticipant := false
+	peers := r.getPeers()
+	for _, p := range peers {
+		if from == p.info.Uid {
+			isParticipant = true
+			break
+		}
+	}
+	if !isParticipant && from != r.systemUid {
+		log.Warnf("sender not found in room, maybe the peer was kicked")
+		return
+	}
+
 	if to == "all" {
 		r.broadcastRoomEvent(
 			from,
@@ -366,7 +387,6 @@ func (r *Room) sendMessage(msg *room.Message) {
 		return
 	}
 
-	peers := r.getPeers()
 	for _, p := range peers {
 		if to == p.info.Uid {
 			if err := p.sendMessage(msg); err != nil {
