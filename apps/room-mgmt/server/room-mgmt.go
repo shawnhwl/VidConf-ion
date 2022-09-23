@@ -29,10 +29,11 @@ type NatsConf struct {
 	URL string `mapstructure:"url"`
 }
 
-type HttpConf struct {
+type RoomMgmtConf struct {
 	PollInSeconds int    `mapstructure:"pollInSeconds"`
-	Realm         string `mapstructure:"realm"`
 	Addr          string `mapstructure:"address"`
+	SystemId      string `mapstructure:"system_userid"`
+	SystemName    string `mapstructure:"system_username"`
 	Cert          string `mapstructure:"cert"`
 	Key           string `mapstructure:"key"`
 }
@@ -51,9 +52,9 @@ type Config struct {
 	Nats   NatsConf   `mapstructure:"nats"`
 	Redis  db.Config  `mapstructure:"redis"`
 
-	Http   HttpConf   `mapstructure:"httpservice"`
-	WebApp WebAppConf `mapstructure:"webapp"`
-	Signal SignalConf `mapstructure:"signal"`
+	RoomMgmt RoomMgmtConf `mapstructure:"roommgmt"`
+	WebApp   WebAppConf   `mapstructure:"webapp"`
+	Signal   SignalConf   `mapstructure:"signal"`
 }
 
 func unmarshal(rawVal interface{}) error {

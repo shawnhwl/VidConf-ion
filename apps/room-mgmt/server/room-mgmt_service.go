@@ -32,9 +32,6 @@ const (
 	ROOM_ENDED          string = "Ended"
 	FROM_START          string = "start"
 	FROM_END            string = "end"
-
-	SYSTEM_ID   string = "system"
-	SYSTEM_NAME string = "PA System"
 )
 
 type Announcement struct {
@@ -53,6 +50,7 @@ type Room struct {
 	StartTime      time.Time      `json:"startTime"`
 	EndTime        time.Time      `json:"endTime"`
 	Announcements  []Announcement `json:"announcements"`
+	AllowedUserId  []string       `json:"allowedUserId"`
 	Users          []User         `json:"users"`
 	EarlyEndReason string         `json:"earlyEndReason"`
 }
@@ -79,6 +77,7 @@ type Patch_Room struct {
 	StartTime     *time.Time           `json:"startTime,omitempty"`
 	EndTime       *time.Time           `json:"endTime,omitempty"`
 	Announcements []Patch_Announcement `json:"announcements,omitempty"`
+	AllowedUserId []string             `json:"allowedUserId,omitempty"`
 }
 
 type Get_Announcement struct {
@@ -96,6 +95,7 @@ type Get_Room struct {
 	StartTime     time.Time          `json:"startTime"`
 	EndTime       time.Time          `json:"endTime"`
 	Announcements []Get_Announcement `json:"announcements"`
+	AllowedUserId []string           `json:"allowedUserId"`
 	Users         []User             `json:"users"`
 }
 
@@ -151,8 +151,9 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	roomId := uuid.NewString()
 	room.Status = ROOM_BOOKED
 	room.RoomId = roomId
-	room.Users = make([]User, 0)
 	room.Announcements = make([]Announcement, 0)
+	room.AllowedUserId = make([]string, 0)
+	room.Users = make([]User, 0)
 	room.EarlyEndReason = ""
 	err = s.patchRoom(&room, patch_room)
 	if err != nil {
@@ -708,6 +709,20 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room) error {
 		announcement.UserId = append(announcement.UserId, patch.UserId...)
 		room.Announcements = append(room.Announcements, announcement)
 	}
+	for _, patchuser := range patch_room.AllowedUserId {
+		isPatched := false
+		for _, user := range room.AllowedUserId {
+			if user == patchuser {
+				isPatched = true
+				break
+			}
+		}
+		if isPatched {
+			continue
+		}
+
+		room.AllowedUserId = append(room.AllowedUserId, patchuser)
+	}
 
 	return nil
 }
@@ -806,6 +821,8 @@ type RoomMgmtService struct {
 	redisDB      *db.Redis
 	onChanges    chan string
 	pollInterval time.Duration
+	systemId     string
+	systemName   string
 
 	roomStarts       map[string]time.Time
 	roomStartKeys    []string
@@ -840,7 +857,9 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		roomService:  roomService,
 		redisDB:      redis_db,
 		onChanges:    make(chan string, 2048),
-		pollInterval: time.Duration(config.Http.PollInSeconds) * time.Second,
+		pollInterval: time.Duration(config.RoomMgmt.PollInSeconds) * time.Second,
+		systemId:     config.RoomMgmt.SystemId,
+		systemName:   config.RoomMgmt.SystemName,
 	}
 	go s.RoomMgmtSentinel()
 	<-s.onChanges
@@ -868,12 +887,12 @@ func (s *RoomMgmtService) start() {
 	router.DELETE("/rooms/:roomid/announcements", s.deleteAnnouncementsByRoomId)
 	s.testAPI(router)
 
-	if s.conf.Http.Cert != "" && s.conf.Http.Key != "" {
-		log.Infof("HTTP service starting at %s", s.conf.Http.Addr)
-		log.Panicf("%s", router.RunTLS(s.conf.Http.Addr, s.conf.Http.Cert, s.conf.Http.Key))
+	if s.conf.RoomMgmt.Cert != "" && s.conf.RoomMgmt.Key != "" {
+		log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
+		log.Panicf("%s", router.RunTLS(s.conf.RoomMgmt.Addr, s.conf.RoomMgmt.Cert, s.conf.RoomMgmt.Key))
 	} else {
-		log.Infof("HTTP service starting at %s", s.conf.Http.Addr)
-		log.Panicf("%s", router.Run(s.conf.Http.Addr))
+		log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
+		log.Panicf("%s", router.Run(s.conf.RoomMgmt.Addr))
 	}
 }
 
