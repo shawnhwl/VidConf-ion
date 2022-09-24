@@ -93,6 +93,7 @@ func (s *RoomMgmtService) endRoom(roomid, reason string) error {
 	for _, peer := range peerinfo {
 		s.kickUser(roomid, peer.Uid)
 	}
+	s.kickUser(roomid, s.systemUid)
 	if reason == "" {
 		reason = "session ended"
 	}
@@ -146,10 +147,10 @@ func (s *RoomMgmtService) RoomMgmtSentinel() {
 	s.initTimings()
 	s.onChanges <- "ok"
 
+	log.Infof("RoomMgmtSentinel Started")
 	for {
 		select {
 		case roomid := <-s.onChanges:
-			log.Infof("database changes to roomid '%s'", roomid)
 			s.updateTimes(roomid)
 		default:
 			s.startRooms()
@@ -173,7 +174,7 @@ func (s *RoomMgmtService) initTimings() {
 		return
 	}
 
-	var rooms Rooms
+	var rooms RoomBookings
 	err := json.Unmarshal([]byte(dbRecords), &rooms)
 	if err != nil {
 		log.Errorf(err.Error())
@@ -188,7 +189,7 @@ func (s *RoomMgmtService) initTimings() {
 			toDeleteId = append(toDeleteId, id)
 			continue
 		}
-		var roomInfo Room
+		var roomInfo RoomBooking
 		err := json.Unmarshal([]byte(dbRecords), &roomInfo)
 		if err != nil {
 			log.Errorf("could not decode roomid '%s' records: %s", roomid, err)
@@ -214,9 +215,10 @@ func (s *RoomMgmtService) initTimings() {
 }
 
 func (s *RoomMgmtService) updateTimes(roomid string) {
+	log.Infof("Database changes in RoomId '%s'", roomid)
 	dbRecords := s.redisDB.Get(roomid)
 
-	var roomInfo Room
+	var roomInfo RoomBooking
 	err := json.Unmarshal([]byte(dbRecords), &roomInfo)
 	if err != nil {
 		log.Errorf("could not decode roomid '%s' records: %s", roomid, err)
@@ -245,6 +247,7 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		s.deleteAnnouncementsByRoom(roomid)
 		return
 	}
+
 	s.roomEnds[roomid] = Terminations{roomInfo.EndTime, roomInfo.EarlyEndReason}
 	if roomInfo.Status == ROOM_BOOKED {
 		s.roomStarts[roomid] = roomInfo.StartTime
@@ -261,6 +264,7 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 	}
 	if len(roomInfo.Announcements) == 0 {
 		s.deleteAnnouncementsByRoom(roomid)
+		s.sortTimes()
 		return
 	}
 
@@ -354,7 +358,7 @@ func (s *RoomMgmtService) startRoomStatus(roomId string) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err := json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -381,7 +385,7 @@ func (s *RoomMgmtService) endRoomStatus(roomId string) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err := json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -408,7 +412,7 @@ func (s *RoomMgmtService) sendAnnouncementStatus(roomId string, announceId int64
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err := json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)

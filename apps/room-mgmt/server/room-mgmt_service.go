@@ -43,16 +43,16 @@ type Announcement struct {
 	UserId                []string `json:"userId"`
 }
 
-type Room struct {
-	Status         string         `json:"status"`
-	RoomId         string         `json:"roomId"`
-	RoomName       string         `json:"roomName"`
-	StartTime      time.Time      `json:"startTime"`
-	EndTime        time.Time      `json:"endTime"`
-	Announcements  []Announcement `json:"announcements"`
-	AllowedUserId  []string       `json:"allowedUserId"`
-	Users          []User         `json:"users"`
-	EarlyEndReason string         `json:"earlyEndReason"`
+type RoomBooking struct {
+	Status          string         `json:"status"`
+	RoomId          string         `json:"roomId"`
+	RoomName        string         `json:"roomName"`
+	StartTime       time.Time      `json:"startTime"`
+	EndTime         time.Time      `json:"endTime"`
+	Announcements   []Announcement `json:"announcements"`
+	PermittedUserId []string       `json:"permittedUserId"`
+	Users           []User         `json:"users"`
+	EarlyEndReason  string         `json:"earlyEndReason"`
 }
 
 type User struct {
@@ -60,7 +60,7 @@ type User struct {
 	UserName string `json:"userName"`
 }
 
-type Rooms struct {
+type RoomBookings struct {
 	RoomIds []string `json:"roomId"`
 }
 
@@ -72,12 +72,12 @@ type Patch_Announcement struct {
 	UserId                []string `json:"userId,omitempty"`
 }
 
-type Patch_Room struct {
-	RoomName      *string              `json:"roomName,omitempty"`
-	StartTime     *time.Time           `json:"startTime,omitempty"`
-	EndTime       *time.Time           `json:"endTime,omitempty"`
-	Announcements []Patch_Announcement `json:"announcements,omitempty"`
-	AllowedUserId []string             `json:"allowedUserId,omitempty"`
+type Patch_RoomBooking struct {
+	RoomName        *string              `json:"roomName,omitempty"`
+	StartTime       *time.Time           `json:"startTime,omitempty"`
+	EndTime         *time.Time           `json:"endTime,omitempty"`
+	Announcements   []Patch_Announcement `json:"announcements,omitempty"`
+	PermittedUserId []string             `json:"permittedUserId,omitempty"`
 }
 
 type Get_Announcement struct {
@@ -88,18 +88,18 @@ type Get_Announcement struct {
 	UserId                []string `json:"userId"`
 }
 
-type Get_Room struct {
-	Status        string             `json:"status"`
-	RoomId        string             `json:"roomId"`
-	RoomName      string             `json:"roomName"`
-	StartTime     time.Time          `json:"startTime"`
-	EndTime       time.Time          `json:"endTime"`
-	Announcements []Get_Announcement `json:"announcements"`
-	AllowedUserId []string           `json:"allowedUserId"`
-	Users         []User             `json:"users"`
+type Get_RoomBooking struct {
+	Status          string             `json:"status"`
+	RoomId          string             `json:"roomId"`
+	RoomName        string             `json:"roomName"`
+	StartTime       time.Time          `json:"startTime"`
+	EndTime         time.Time          `json:"endTime"`
+	Announcements   []Get_Announcement `json:"announcements"`
+	PermittedUserId []string           `json:"permittedUserId"`
+	Users           []User             `json:"users"`
 }
 
-type Delete_Room struct {
+type Delete_RoomBooking struct {
 	TimeLeftInSeconds *int64  `json:"timeLeftInSeconds,omitempty"`
 	Reason            *string `json:"reason,omitempty"`
 }
@@ -121,7 +121,7 @@ func (s *RoomMgmtService) getReadiness(c *gin.Context) {
 func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	log.Infof("POST /rooms")
 
-	var patch_room Patch_Room
+	var patch_room Patch_RoomBooking
 	if err := c.ShouldBindJSON(&patch_room); err != nil {
 		log.Warnf(err.Error())
 		c.String(http.StatusBadRequest, err.Error())
@@ -147,12 +147,12 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	roomId := uuid.NewString()
 	room.Status = ROOM_BOOKED
 	room.RoomId = roomId
 	room.Announcements = make([]Announcement, 0)
-	room.AllowedUserId = make([]string, 0)
+	room.PermittedUserId = make([]string, 0)
 	room.Users = make([]User, 0)
 	room.EarlyEndReason = ""
 	err = s.patchRoom(&room, patch_room)
@@ -178,7 +178,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	log.Infof("%s", roomJSON)
 
 	dbRecords := s.redisDB.Get(DB_ROOMS)
-	var rooms Rooms
+	var rooms RoomBookings
 	if dbRecords != "" {
 		err = json.Unmarshal([]byte(dbRecords), &rooms)
 		if err != nil {
@@ -214,7 +214,7 @@ func (s *RoomMgmtService) getRooms(c *gin.Context) {
 		return
 	}
 
-	var rooms Rooms
+	var rooms RoomBookings
 	err := json.Unmarshal([]byte(dbRecords), &rooms)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -242,7 +242,7 @@ func (s *RoomMgmtService) getRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	var get_room Get_Room
+	var get_room Get_RoomBooking
 	err := json.Unmarshal([]byte(dbRecords), &get_room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -268,7 +268,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("PATCH /rooms/%s", roomId)
 
-	var patch_room Patch_Room
+	var patch_room Patch_RoomBooking
 	if err := c.ShouldBindJSON(&patch_room); err != nil {
 		log.Warnf(err.Error())
 		c.String(http.StatusBadRequest, err.Error())
@@ -289,7 +289,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err = json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -315,7 +315,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	var get_room Get_Room
+	var get_room Get_RoomBooking
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -343,7 +343,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("DELETE /rooms/%s", roomId)
 
-	var delete_room Delete_Room
+	var delete_room Delete_RoomBooking
 	if err := c.ShouldBindJSON(&delete_room); err != nil {
 		log.Warnf(err.Error())
 		c.String(http.StatusBadRequest, err.Error())
@@ -364,7 +364,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err = json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -415,7 +415,7 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err := json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -446,7 +446,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("PUT /rooms/%s/announcements", roomId)
 
-	var patch_room Patch_Room
+	var patch_room Patch_RoomBooking
 	if err := c.ShouldBindJSON(&patch_room); err != nil {
 		log.Warnf(err.Error())
 		c.String(http.StatusBadRequest, err.Error())
@@ -467,7 +467,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err = json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -493,7 +493,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	var get_room Get_Room
+	var get_room Get_RoomBooking
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -542,7 +542,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	var room Room
+	var room RoomBooking
 	err = json.Unmarshal([]byte(dbRecords), &room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -596,7 +596,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	var get_room Get_Room
+	var get_room Get_RoomBooking
 	err = json.Unmarshal([]byte(roomJSON), &get_room)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
@@ -621,14 +621,14 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 }
 
 func (s *RoomMgmtService) roomNotFound(roomId string) string {
-	return "RoomId " + roomId + " not found in database"
+	return "RoomId '" + roomId + "' not found in database"
 }
 
 func (s *RoomMgmtService) roomNotStarted(roomId string) string {
-	return "RoomId " + roomId + " session not started"
+	return "RoomId '" + roomId + "' session not started"
 }
 
-func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room) error {
+func (s *RoomMgmtService) patchRoom(room *RoomBooking, patch_room Patch_RoomBooking) error {
 	if patch_room.RoomName != nil {
 		room.RoomName = *patch_room.RoomName
 	}
@@ -709,9 +709,9 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room) error {
 		announcement.UserId = append(announcement.UserId, patch.UserId...)
 		room.Announcements = append(room.Announcements, announcement)
 	}
-	for _, patchuser := range patch_room.AllowedUserId {
+	for _, patchuser := range patch_room.PermittedUserId {
 		isPatched := false
-		for _, user := range room.AllowedUserId {
+		for _, user := range room.PermittedUserId {
 			if user == patchuser {
 				isPatched = true
 				break
@@ -721,13 +721,13 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room) error {
 			continue
 		}
 
-		room.AllowedUserId = append(room.AllowedUserId, patchuser)
+		room.PermittedUserId = append(room.PermittedUserId, patchuser)
 	}
 
 	return nil
 }
 
-func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room) error {
+func (s *RoomMgmtService) putAnnouncement(room *RoomBooking, patch_room Patch_RoomBooking) error {
 	idMap := make(map[int64]int)
 	for _, patch := range patch_room.Announcements {
 		if patch.AnnounceId == nil {

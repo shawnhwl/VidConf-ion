@@ -126,6 +126,20 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 
 	sid := pinfo.Sid
 	uid := pinfo.Uid
+	roomname, err := s.getRoomsByRoomid(sid, uid)
+	if err != nil {
+		reply := &room.Reply_Join{
+			Join: &room.JoinReply{
+				Success: false,
+				Room:    nil,
+				Error: &room.Error{
+					Code:   room.ErrorType_PermissionDenied,
+					Reason: err.Error(),
+				},
+			},
+		}
+		return reply, nil, status.Errorf(codes.Internal, err.Error())
+	}
 
 	key := util.GetRedisRoomKey(sid)
 	// create in redis if room not exist
@@ -155,7 +169,7 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 	if r == nil {
 		// create room and store
 		r = s.rs.createRoom(sid)
-		err := s.rs.redis.HMSetTTL(roomRedisExpire, key, "sid", sid, "name", "",
+		err := s.rs.redis.HMSetTTL(roomRedisExpire, key, "sid", sid, "name", roomname,
 			"password", "", "description", "", "lock", false)
 		if err != nil {
 			reply := &room.Reply_Join{
@@ -194,7 +208,7 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 
 	// store peer to redis
 	key = util.GetRedisPeerKey(sid, uid)
-	err := s.rs.redis.HMSetTTL(roomRedisExpire, key, "sid", sid, "uid", uid, "dest", in.Join.Peer.Destination,
+	err = s.rs.redis.HMSetTTL(roomRedisExpire, key, "sid", sid, "uid", uid, "dest", in.Join.Peer.Destination,
 		"name", in.Join.Peer.DisplayName, "role", in.Join.Peer.Role.String(), "protocol", in.Join.Peer.Protocol.String(), "direction", in.Join.Peer.Direction.String(), "avatar", in.Join.Peer.Avatar, "info", in.Join.Peer.ExtraInfo)
 	if err != nil {
 		reply := &room.Reply_Join{
