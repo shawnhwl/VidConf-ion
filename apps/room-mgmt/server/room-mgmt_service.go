@@ -282,18 +282,8 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(roomJSON))
 
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
-		return
-	}
-
-	var room RoomBooking
-	err = json.Unmarshal([]byte(dbRecords), &room)
+	room, err := s.getRoomBooking(roomId, c)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		c.String(http.StatusInternalServerError, "database corrupted")
 		return
 	}
 
@@ -357,18 +347,8 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(roomJSON))
 
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
-		return
-	}
-
-	var room RoomBooking
-	err = json.Unmarshal([]byte(dbRecords), &room)
+	room, err := s.getRoomBooking(roomId, c)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		c.String(http.StatusInternalServerError, "database corrupted")
 		return
 	}
 
@@ -408,18 +388,8 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 	userId := c.Param("userid")
 	log.Infof("DELETE /rooms/%s/users/%s", roomId, userId)
 
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
-		return
-	}
-
-	var room RoomBooking
-	err := json.Unmarshal([]byte(dbRecords), &room)
+	room, err := s.getRoomBooking(roomId, c)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		c.String(http.StatusInternalServerError, "database corrupted")
 		return
 	}
 
@@ -460,18 +430,8 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(roomJSON))
 
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
-		return
-	}
-
-	var room RoomBooking
-	err = json.Unmarshal([]byte(dbRecords), &room)
+	room, err := s.getRoomBooking(roomId, c)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		c.String(http.StatusInternalServerError, "database corrupted")
 		return
 	}
 
@@ -535,20 +495,11 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(announceHSON))
 
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		c.String(http.StatusBadRequest, s.roomNotFound(roomId))
+	room, err := s.getRoomBooking(roomId, c)
+	if err != nil {
 		return
 	}
 
-	var room RoomBooking
-	err = json.Unmarshal([]byte(dbRecords), &room)
-	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		c.String(http.StatusInternalServerError, "database corrupted")
-		return
-	}
 	if len(room.Announcements) == 0 {
 		warnString := fmt.Sprintf("roomid '%s' has no announcements in database", roomId)
 		log.Warnf(warnString)
@@ -620,6 +571,34 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	c.String(http.StatusOK, string(roomsJSON))
 }
 
+func (s *RoomMgmtService) getRoomBooking(roomId string, c *gin.Context) (RoomBooking, error) {
+	dbRecords := s.redisDB.Get(roomId)
+	if dbRecords == "" {
+		warnString := s.roomNotFound(roomId)
+		log.Warnf(warnString)
+		c.String(http.StatusBadRequest, warnString)
+		return RoomBooking{}, errors.New(warnString)
+	}
+
+	var room RoomBooking
+	err := json.Unmarshal([]byte(dbRecords), &room)
+	if err != nil {
+		errorString := fmt.Sprintf("could not decode booking records: %s", err)
+		log.Errorf(errorString)
+		c.String(http.StatusInternalServerError, "database corrupted")
+		return RoomBooking{}, errors.New(errorString)
+	}
+
+	if room.Status == ROOM_ENDED {
+		warnString := s.roomHasEnded(roomId)
+		log.Warnf(warnString)
+		c.String(http.StatusBadRequest, warnString)
+		return RoomBooking{}, errors.New(warnString)
+	}
+
+	return room, nil
+}
+
 func (s *RoomMgmtService) roomNotFound(roomId string) string {
 	return "RoomId '" + roomId + "' not found in database"
 }
@@ -628,15 +607,26 @@ func (s *RoomMgmtService) roomNotStarted(roomId string) string {
 	return "RoomId '" + roomId + "' session not started"
 }
 
+func (s *RoomMgmtService) roomHasEnded(roomId string) string {
+	return "RoomId '" + roomId + "' session has ended"
+}
+
 func (s *RoomMgmtService) patchRoom(room *RoomBooking, patch_room Patch_RoomBooking) error {
 	if patch_room.RoomName != nil {
 		room.RoomName = *patch_room.RoomName
 	}
 	if patch_room.StartTime != nil {
 		room.StartTime = *patch_room.StartTime
+		if room.Status == ROOM_STARTED && room.StartTime.After(time.Now()) {
+			errorString := fmt.Sprintf("RoomId '%s' has started and new startTime is not due", room.RoomId)
+			return errors.New(errorString)
+		}
 	}
 	if patch_room.EndTime != nil {
 		room.EndTime = *patch_room.EndTime
+		if room.EndTime.Before(room.StartTime) {
+			return errors.New("endtime is before starttime")
+		}
 	}
 	idMap := make(map[int64]int)
 	for _, patch := range patch_room.Announcements {

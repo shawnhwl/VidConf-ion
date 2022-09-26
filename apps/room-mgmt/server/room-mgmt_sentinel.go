@@ -145,6 +145,7 @@ func (s *RoomMgmtService) kickUser(roomid, userid string) (error, error) {
 
 func (s *RoomMgmtService) RoomMgmtSentinel() {
 	s.initTimings()
+	s.sortTimes()
 	s.onChanges <- "ok"
 
 	log.Infof("RoomMgmtSentinel Started")
@@ -152,6 +153,7 @@ func (s *RoomMgmtService) RoomMgmtSentinel() {
 		select {
 		case roomid := <-s.onChanges:
 			s.updateTimes(roomid)
+			s.sortTimes()
 		default:
 			s.startRooms()
 			s.endRooms()
@@ -264,7 +266,6 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 	}
 	if len(roomInfo.Announcements) == 0 {
 		s.deleteAnnouncementsByRoom(roomid)
-		s.sortTimes()
 		return
 	}
 
@@ -306,8 +307,6 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 	for _, announcekey := range toDelete {
 		delete(s.announcements, announcekey)
 	}
-
-	s.sortTimes()
 }
 
 func (s *RoomMgmtService) deleteAnnouncementsByRoom(roomid string) {
