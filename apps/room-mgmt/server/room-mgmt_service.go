@@ -208,27 +208,22 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 func (s *RoomMgmtService) getRooms(c *gin.Context) {
 	log.Infof("GET /rooms")
 
+	var rooms RoomBookings
+	rooms.RoomIds = make([]string, 0)
 	dbRecords := s.redisDB.Get(DB_ROOMS)
 	if dbRecords == "" {
-		c.String(http.StatusOK, "{\n    \"roomId\": []\n}")
+		c.JSON(http.StatusOK, rooms)
 		return
 	}
 
-	var rooms RoomBookings
 	err := json.Unmarshal([]byte(dbRecords), &rooms)
 	if err != nil {
 		log.Errorf("could not decode booking records: %s", err)
 		c.String(http.StatusInternalServerError, "database corrupted")
 		return
 	}
-	roomsJSON, err := json.MarshalIndent(rooms, "", "    ")
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		c.String(http.StatusInternalServerError, "JSON encoding error")
-		return
-	}
 
-	c.String(http.StatusOK, string(roomsJSON))
+	c.JSON(http.StatusOK, rooms)
 }
 
 func (s *RoomMgmtService) getRoomsByRoomid(c *gin.Context) {
@@ -254,14 +249,7 @@ func (s *RoomMgmtService) getRoomsByRoomid(c *gin.Context) {
 		get_room.Users = append(get_room.Users, s.getPeers(roomid)...)
 	}
 
-	roomsJSON, err := json.MarshalIndent(get_room, "", "    ")
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		c.String(http.StatusInternalServerError, "JSON encoding error")
-		return
-	}
-
-	c.String(http.StatusOK, string(roomsJSON))
+	c.JSON(http.StatusOK, get_room)
 }
 
 func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
@@ -317,16 +305,9 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		get_room.Users = append(get_room.Users, s.getPeers(roomId)...)
 	}
 
-	roomsJSON, err := json.MarshalIndent(get_room, "", "    ")
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		c.String(http.StatusInternalServerError, "JSON encoding error")
-		return
-	}
-
 	s.onChanges <- roomId
 	log.Infof("patched room:\n%s", s.redisDB.Get(roomId))
-	c.String(http.StatusOK, string(roomsJSON))
+	c.JSON(http.StatusOK, get_room)
 }
 
 func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
@@ -465,16 +446,9 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		get_room.Users = append(get_room.Users, s.getPeers(roomId)...)
 	}
 
-	roomsJSON, err := json.MarshalIndent(get_room, "", "    ")
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		c.String(http.StatusInternalServerError, "JSON encoding error")
-		return
-	}
-
 	s.onChanges <- roomId
 	log.Infof("put announcements:\n%s", s.redisDB.Get(roomId))
-	c.String(http.StatusOK, string(roomsJSON))
+	c.JSON(http.StatusOK, get_room)
 }
 
 func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
@@ -559,16 +533,9 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		get_room.Users = append(get_room.Users, s.getPeers(roomId)...)
 	}
 
-	roomsJSON, err := json.MarshalIndent(get_room, "", "    ")
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		c.String(http.StatusInternalServerError, "JSON encoding error")
-		return
-	}
-
 	s.onChanges <- roomId
 	log.Infof("deleted announcements:\n%s", s.redisDB.Get(roomId))
-	c.String(http.StatusOK, string(roomsJSON))
+	c.JSON(http.StatusOK, get_room)
 }
 
 func (s *RoomMgmtService) getRoomBooking(roomId string, c *gin.Context) (RoomBooking, error) {
