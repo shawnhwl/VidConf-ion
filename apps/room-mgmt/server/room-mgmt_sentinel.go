@@ -404,7 +404,7 @@ func (s *RoomMgmtService) endRoomStatus(roomId string) {
 	}
 }
 
-func (s *RoomMgmtService) sendAnnouncementStatus(roomId string, announceId int64) {
+func (s *RoomMgmtService) sendAnnouncementStatus(roomId, announceId string) {
 	dbRecords := s.redisDB.Get(roomId)
 	if dbRecords == "" {
 		log.Warnf(s.roomNotFound(roomId))

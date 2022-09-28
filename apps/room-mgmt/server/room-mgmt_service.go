@@ -36,7 +36,7 @@ const (
 
 type Announcement struct {
 	Status                string   `json:"status"`
-	AnnounceId            int64    `json:"announceId"`
+	AnnounceId            string   `json:"announceId"`
 	Message               string   `json:"message"`
 	RelativeFrom          string   `json:"relativeFrom"`
 	RelativeTimeInSeconds int64    `json:"relativeTimeInSeconds"`
@@ -51,7 +51,6 @@ type RoomBooking struct {
 	EndTime         time.Time      `json:"endTime"`
 	Announcements   []Announcement `json:"announcements"`
 	PermittedUserId []string       `json:"permittedUserId"`
-	Users           []User         `json:"users"`
 	EarlyEndReason  string         `json:"earlyEndReason"`
 }
 
@@ -65,7 +64,7 @@ type RoomBookings struct {
 }
 
 type Patch_Announcement struct {
-	AnnounceId            *int64   `json:"announceId,omitempty"`
+	AnnounceId            *string  `json:"announceId,omitempty"`
 	Message               *string  `json:"message,omitempty"`
 	RelativeFrom          *string  `json:"relativeFrom,omitempty"`
 	RelativeTimeInSeconds *int64   `json:"relativeTimeInSeconds,omitempty"`
@@ -81,7 +80,7 @@ type Patch_RoomBooking struct {
 }
 
 type Get_Announcement struct {
-	AnnounceId            int64    `json:"announceId"`
+	AnnounceId            string   `json:"announceId"`
 	Message               string   `json:"message"`
 	RelativeFrom          string   `json:"relativeFrom"`
 	RelativeTimeInSeconds int64    `json:"relativeTimeInSeconds"`
@@ -105,7 +104,7 @@ type Delete_RoomBooking struct {
 }
 
 type Delete_Announcement struct {
-	AnnounceId []int64 `json:"announceId"`
+	AnnounceId []string `json:"announceId"`
 }
 
 func (s *RoomMgmtService) getLiveness(c *gin.Context) {
@@ -153,7 +152,6 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	room.RoomId = roomId
 	room.Announcements = make([]Announcement, 0)
 	room.PermittedUserId = make([]string, 0)
-	room.Users = make([]User, 0)
 	room.EarlyEndReason = ""
 	err = s.patchRoom(&room, patch_room)
 	if err != nil {
@@ -501,7 +499,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 				}
 			}
 			if !isFound {
-				warnString := fmt.Sprintf("roomid '%s' does not have announceId '%d' in database", roomId, announceId)
+				warnString := fmt.Sprintf("roomid '%s' does not have announceId '%s' in database", roomId, announceId)
 				log.Warnf(warnString)
 				c.String(http.StatusBadRequest, warnString)
 				return
@@ -595,7 +593,7 @@ func (s *RoomMgmtService) patchRoom(room *RoomBooking, patch_room Patch_RoomBook
 			return errors.New("endtime is before starttime")
 		}
 	}
-	idMap := make(map[int64]int)
+	idMap := make(map[string]int)
 	for _, patch := range patch_room.Announcements {
 		if patch.AnnounceId == nil {
 			return errors.New(MISS_ANNOUNCE_ID)
@@ -666,6 +664,9 @@ func (s *RoomMgmtService) patchRoom(room *RoomBooking, patch_room Patch_RoomBook
 		announcement.UserId = append(announcement.UserId, patch.UserId...)
 		room.Announcements = append(room.Announcements, announcement)
 	}
+	if len(patch_room.PermittedUserId) == 0 {
+		room.PermittedUserId = make([]string, 0)
+	}
 	for _, patchuser := range patch_room.PermittedUserId {
 		isPatched := false
 		for _, user := range room.PermittedUserId {
@@ -685,7 +686,7 @@ func (s *RoomMgmtService) patchRoom(room *RoomBooking, patch_room Patch_RoomBook
 }
 
 func (s *RoomMgmtService) putAnnouncement(room *RoomBooking, patch_room Patch_RoomBooking) error {
-	idMap := make(map[int64]int)
+	idMap := make(map[string]int)
 	for _, patch := range patch_room.Announcements {
 		if patch.AnnounceId == nil {
 			return errors.New(MISS_ANNOUNCE_ID)
@@ -766,7 +767,7 @@ type Announcements struct {
 
 type AnnounceKey struct {
 	roomId     string
-	announceId int64
+	announceId string
 }
 
 type RoomMgmtService struct {
