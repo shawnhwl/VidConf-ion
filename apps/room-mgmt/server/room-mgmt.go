@@ -32,10 +32,10 @@ type NatsConf struct {
 type RoomMgmtConf struct {
 	PollInSeconds  int    `mapstructure:"pollInSeconds"`
 	Addr           string `mapstructure:"address"`
-	SystemUid      string `mapstructure:"system_userid"`
-	SystemUsername string `mapstructure:"system_username"`
 	Cert           string `mapstructure:"cert"`
 	Key            string `mapstructure:"key"`
+	SystemUid      string `mapstructure:"system_userid"`
+	SystemUsername string `mapstructure:"system_username"`
 }
 
 type WebAppConf struct {
@@ -47,11 +47,10 @@ type SignalConf struct {
 }
 
 type Config struct {
-	Global GlobalConf `mapstructure:"global"`
-	Log    LogConf    `mapstructure:"log"`
-	Nats   NatsConf   `mapstructure:"nats"`
-	Redis  db.Config  `mapstructure:"redis"`
-
+	Global   GlobalConf   `mapstructure:"global"`
+	Log      LogConf      `mapstructure:"log"`
+	Nats     NatsConf     `mapstructure:"nats"`
+	Redis    db.Config    `mapstructure:"redis"`
 	RoomMgmt RoomMgmtConf `mapstructure:"roommgmt"`
 	WebApp   WebAppConf   `mapstructure:"webapp"`
 	Signal   SignalConf   `mapstructure:"signal"`

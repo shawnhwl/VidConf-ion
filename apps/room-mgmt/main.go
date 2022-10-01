@@ -13,9 +13,8 @@ import (
 
 // run as distributed node
 func main() {
-	var confFile, logLevel string
+	var confFile string
 	flag.StringVar(&confFile, "c", "app-room-mgmt.toml", "config file")
-	flag.StringVar(&logLevel, "l", "info", "log level")
 	flag.Parse()
 
 	flag.Parse()

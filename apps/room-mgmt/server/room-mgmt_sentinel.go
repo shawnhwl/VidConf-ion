@@ -21,8 +21,8 @@ type Message struct {
 	Msg Payload `json:"msg"`
 }
 
-func (s *RoomMgmtService) createRoom(roomid string) error {
-	err := s.roomService.CreateRoom(sdk.RoomInfo{Sid: roomid})
+func (s *RoomMgmtService) createRoom(roomid, roomname string) error {
+	err := s.roomService.CreateRoom(sdk.RoomInfo{Sid: roomid, Name: roomname})
 	if err != nil {
 		output := fmt.Sprintf("Error creating roomid '%s' : %v", roomid, err)
 		log.Errorf(output)
@@ -84,8 +84,8 @@ func (s *RoomMgmtService) postMessage(roomid, message string, toid []string) err
 	return nil
 }
 
-func (s *RoomMgmtService) endRoom(roomid, reason string) error {
-	err := s.createRoom(roomid)
+func (s *RoomMgmtService) endRoom(roomid, roomname, reason string) error {
+	err := s.createRoom(roomid, roomname)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (s *RoomMgmtService) RoomMgmtSentinel() {
 }
 
 func (s *RoomMgmtService) initTimings() {
-	s.roomStarts = make(map[string]time.Time)
+	s.roomStarts = make(map[string]StartRooms)
 	s.roomStartKeys = make([]string, 0)
 	s.roomEnds = make(map[string]Terminations)
 	s.roomEndKeys = make([]string, 0)
@@ -250,9 +250,9 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		return
 	}
 
-	s.roomEnds[roomid] = Terminations{roomInfo.EndTime, roomInfo.EarlyEndReason}
+	s.roomEnds[roomid] = Terminations{roomInfo.EndTime, roomInfo.RoomName, roomInfo.EarlyEndReason}
 	if roomInfo.Status == ROOM_BOOKED {
-		s.roomStarts[roomid] = roomInfo.StartTime
+		s.roomStarts[roomid] = StartRooms{roomInfo.StartTime, roomInfo.RoomName}
 	} else {
 		delete(s.roomStarts, roomid)
 		toDeleteId := make([]int, 0)
@@ -330,7 +330,7 @@ func (s *RoomMgmtService) sortTimes() {
 		s.roomStartKeys = append(s.roomStartKeys, key)
 	}
 	sort.SliceStable(s.roomStartKeys, func(i, j int) bool {
-		return s.roomStarts[s.roomStartKeys[i]].Before(s.roomStarts[s.roomStartKeys[j]])
+		return s.roomStarts[s.roomStartKeys[i]].timeTick.Before(s.roomStarts[s.roomStartKeys[j]].timeTick)
 	})
 
 	s.roomEndKeys = make([]string, 0)
@@ -439,11 +439,11 @@ func (s *RoomMgmtService) sendAnnouncementStatus(roomId, announceId string) {
 func (s *RoomMgmtService) startRooms() {
 	toDeleteId := make([]int, 0)
 	for id, key := range s.roomStartKeys {
-		if s.roomStarts[key].After(time.Now()) {
+		if s.roomStarts[key].timeTick.After(time.Now()) {
 			break
 		}
 		log.Infof("startRoom %v, %v", key, s.roomStarts[key])
-		go s.createRoom(key)
+		go s.createRoom(key, s.roomStarts[key].roomname)
 		go s.startRoomStatus(key)
 		delete(s.roomStarts, key)
 		toDeleteId = append(toDeleteId, id)
@@ -458,7 +458,7 @@ func (s *RoomMgmtService) endRooms() {
 			break
 		}
 		log.Infof("endRoom %v, %v", key, s.roomEnds[key])
-		go s.endRoom(key, s.roomEnds[key].reason)
+		go s.endRoom(key, s.roomEnds[key].roomname, s.roomEnds[key].reason)
 		go s.endRoomStatus(key)
 		delete(s.roomEnds, key)
 		toDeleteId = append(toDeleteId, id)

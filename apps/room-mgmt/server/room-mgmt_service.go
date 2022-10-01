@@ -754,8 +754,14 @@ func removeSlice[T any](slice []T, id int) []T {
 	return slice[:len(slice)-1]
 }
 
+type StartRooms struct {
+	timeTick time.Time
+	roomname string
+}
+
 type Terminations struct {
 	timeTick time.Time
+	roomname string
 	reason   string
 }
 
@@ -782,7 +788,7 @@ type RoomMgmtService struct {
 	systemUid      string
 	systemUsername string
 
-	roomStarts       map[string]time.Time
+	roomStarts       map[string]StartRooms
 	roomStartKeys    []string
 	roomEnds         map[string]Terminations
 	roomEndKeys      []string
@@ -827,6 +833,7 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 
 func (s *RoomMgmtService) start() {
 	defer s.redisDB.Close()
+	defer s.roomService.Close()
 	defer close(s.onChanges)
 
 	log.Infof("--- Starting HTTP-API Server ---")
@@ -855,16 +862,6 @@ func (s *RoomMgmtService) start() {
 }
 
 func (s *RoomMgmtService) testAPI(router *gin.Engine) {
-	router.POST("/rooms/:roomid", func(c *gin.Context) {
-		roomid := c.Param("roomid")
-		log.Infof("POST /rooms/%s/", roomid)
-		err := s.createRoom(roomid)
-		if err != nil {
-			c.String(http.StatusInternalServerError, "POST /rooms/%s [ERR]%s", roomid, err.Error())
-			return
-		}
-		c.String(http.StatusOK, "POST /rooms/%s", roomid)
-	})
 	router.POST("/rooms/:roomid/:message/:toid", func(c *gin.Context) {
 		roomid := c.Param("roomid")
 		message := c.Param("message")
@@ -881,55 +878,5 @@ func (s *RoomMgmtService) testAPI(router *gin.Engine) {
 			return
 		}
 		c.String(http.StatusOK, "POST /rooms/%s/%s/%s", roomid, message, toid)
-	})
-	router.DELETE("/rooms/:roomid/reasons/:reason", func(c *gin.Context) {
-		roomid := c.Param("roomid")
-		reason := c.Param("reason")
-		log.Infof("DELETE /rooms/%s/reasons/%s", roomid, reason)
-		err := s.endRoom(roomid, reason)
-		if err != nil {
-			c.String(http.StatusInternalServerError, "DELETE /rooms/%s/reasons/%s [ERR]%s", roomid, reason, err.Error())
-			return
-		}
-		c.String(http.StatusOK, "DELETE /rooms/%s/reasons/%s", roomid, reason)
-	})
-	router.GET("/rooms/:roomid/users", func(c *gin.Context) {
-		roomid := c.Param("roomid")
-		log.Infof("GET /rooms/%s/users", roomid)
-		users := s.getPeers(roomid)
-		c.String(http.StatusOK, "%v", users)
-	})
-	router.POST("/rooms/:roomid/users/:userid/:username", func(c *gin.Context) {
-		roomid := c.Param("roomid")
-		userid := c.Param("userid")
-		username := c.Param("username")
-		log.Infof("POST /rooms/%s/users/%s/%s", roomid, userid, username)
-		var peerInfo sdk.PeerInfo
-		peerInfo.Sid = roomid
-		peerInfo.Uid = userid
-		peerInfo.DisplayName = username
-		err := s.roomService.AddPeer(peerInfo)
-		if err != nil {
-			c.String(http.StatusInternalServerError, "POST /rooms/%s/users/%s [ERR]%s", roomid, userid, err.Error())
-			return
-		}
-		c.String(http.StatusOK, "POST /rooms/%s/users/%s", roomid, userid)
-	})
-	router.POST("/kick/rooms/:roomid/users/:userid", func(c *gin.Context) {
-		roomid := c.Param("roomid")
-		userid := c.Param("userid")
-		log.Infof("POST /kick/rooms/%s/users/%s", roomid, userid)
-		warn, err := s.kickUser(roomid, userid)
-		if err != nil {
-			log.Errorf(err.Error())
-			c.String(http.StatusInternalServerError, err.Error())
-			return
-		}
-		if warn != nil {
-			log.Warnf(warn.Error())
-			c.String(http.StatusBadRequest, warn.Error())
-			return
-		}
-		c.String(http.StatusOK, "Kicked userId '%s' from roomId '%s'", userid, roomid)
 	})
 }

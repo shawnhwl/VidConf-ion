@@ -329,7 +329,7 @@ func (r *Room) broadcastRoomEvent(uid string, event *room.Reply) {
 	peers := r.getPeers()
 	r.update = time.Now()
 	for _, p := range peers {
-		if p.UID() == uid {
+		if p.UID() != r.systemUid && p.UID() == uid {
 			continue
 		}
 
@@ -344,7 +344,7 @@ func (r *Room) broadcastPeerEvent(event *room.PeerEvent) {
 	peers := r.getPeers()
 	r.update = time.Now()
 	for _, p := range peers {
-		if p.info.Uid == event.Peer.Uid {
+		if event.Peer.Uid == r.systemUid || p.info.Uid == event.Peer.Uid {
 			continue
 		}
 		if err := p.sendPeerEvent(event); err != nil {
@@ -362,15 +362,17 @@ func (r *Room) sendMessage(msg *room.Message) {
 	data := msg.Payload
 	log.Debugf("Room.onMessage %v => %v, type: %v, data: %v", from, to, dtype, data)
 
-	isParticipant := false
+	isParticipant := from == r.systemUid
 	peers := r.getPeers()
 	for _, p := range peers {
-		if from == p.info.Uid {
-			isParticipant = true
+		if isParticipant {
 			break
 		}
+		if from == p.info.Uid {
+			isParticipant = true
+		}
 	}
-	if !isParticipant && from != r.systemUid {
+	if !isParticipant {
 		log.Warnf("sender not found in room, maybe the peer was kicked")
 		return
 	}
@@ -388,7 +390,7 @@ func (r *Room) sendMessage(msg *room.Message) {
 	}
 
 	for _, p := range peers {
-		if to == p.info.Uid {
+		if to == p.info.Uid || r.systemUid == p.info.Uid {
 			if err := p.sendMessage(msg); err != nil {
 				log.Errorf("send msg to peer(%s) error: %v", p.info.Uid, err)
 			}
