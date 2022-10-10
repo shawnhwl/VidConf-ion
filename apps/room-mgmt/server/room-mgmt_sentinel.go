@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -171,63 +170,35 @@ func (s *RoomMgmtService) initTimings() {
 	s.announcements = make(map[AnnounceKey]Announcements)
 	s.announcementKeys = make([]AnnounceKey, 0)
 
-	dbRecords := s.redisDB.Get(DB_ROOMS)
-	if dbRecords == "" {
-		return
-	}
-
-	var rooms RoomBookings
-	err := json.Unmarshal([]byte(dbRecords), &rooms)
+	queryStmt := `SELECT "id" FROM "room" WHERE "status"<>$1`
+	rows, err := s.postgresDB.Query(queryStmt, ROOM_ENDED)
 	if err != nil {
-		log.Errorf(err.Error())
+		log.Errorf("could not query database: %s", err)
 		return
 	}
+	defer rows.Close()
 
-	toDeleteId := make([]int, 0)
-	for id, roomid := range rooms.RoomIds {
-		dbRecords := s.redisDB.Get(roomid)
-		if dbRecords == "" {
-			log.Errorf("missing roomid '%s' records in database", roomid)
-			toDeleteId = append(toDeleteId, id)
-			continue
-		}
-		var roomInfo RoomBooking
-		err := json.Unmarshal([]byte(dbRecords), &roomInfo)
+	for rows.Next() {
+		var roomid string
+		err = rows.Scan(&roomid)
 		if err != nil {
-			log.Errorf("could not decode roomid '%s' records: %s", roomid, err)
-			toDeleteId = append(toDeleteId, id)
+			log.Errorf("could not query database: %s", err)
 			continue
 		}
-	}
-	rooms.RoomIds = deleteSlices(rooms.RoomIds, toDeleteId)
-
-	if len(toDeleteId) != 0 {
-		roomsJSON, err := json.Marshal(rooms)
-		if err == nil {
-			err = s.redisDB.Set(DB_ROOMS, roomsJSON, 0)
-			if err != nil {
-				log.Errorf("Error writing to Database: %s", err)
-			}
-		}
-	}
-
-	for _, roomid := range rooms.RoomIds {
 		s.updateTimes(roomid)
 	}
 }
 
 func (s *RoomMgmtService) updateTimes(roomid string) {
 	log.Infof("Database changes in RoomId '%s'", roomid)
-	dbRecords := s.redisDB.Get(roomid)
 
-	var roomInfo RoomBooking
-	err := json.Unmarshal([]byte(dbRecords), &roomInfo)
+	room, err := s.queryRoom(roomid)
 	if err != nil {
-		log.Errorf("could not decode roomid '%s' records: %s", roomid, err)
+		log.Errorf("could not query database: %s", err.Error())
 		return
 	}
 
-	if roomInfo.Status == ROOM_ENDED {
+	if room.Status == ROOM_ENDED {
 		delete(s.roomStarts, roomid)
 		toDeleteId := make([]int, 0)
 		for id, key := range s.roomStartKeys {
@@ -250,9 +221,9 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		return
 	}
 
-	s.roomEnds[roomid] = Terminations{roomInfo.EndTime, roomInfo.RoomName, roomInfo.EarlyEndReason}
-	if roomInfo.Status == ROOM_BOOKED {
-		s.roomStarts[roomid] = StartRooms{roomInfo.StartTime, roomInfo.RoomName}
+	s.roomEnds[roomid] = Terminations{room.EndTime, room.Name, room.EarlyEndReason}
+	if room.Status == ROOM_BOOKED {
+		s.roomStarts[roomid] = StartRooms{room.StartTime, room.Name}
 	} else {
 		delete(s.roomStarts, roomid)
 		toDeleteId := make([]int, 0)
@@ -264,24 +235,24 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		}
 		s.roomStartKeys = deleteSlices(s.roomStartKeys, toDeleteId)
 	}
-	if len(roomInfo.Announcements) == 0 {
+	if len(room.Announcements) == 0 {
 		s.deleteAnnouncementsByRoom(roomid)
 		return
 	}
 
-	for _, announce := range roomInfo.Announcements {
+	for _, announce := range room.Announcements {
 		if announce.Status == ANNOUNCEMENT_SENT {
-			delete(s.announcements, AnnounceKey{roomid, announce.AnnounceId})
+			delete(s.announcements, AnnounceKey{roomid, announce.Id})
 			continue
 		}
 		gap := time.Duration(announce.RelativeTimeInSeconds) * time.Second
 		var anounceTime time.Time
 		if announce.RelativeFrom == FROM_END {
-			anounceTime = roomInfo.EndTime.Add(-gap)
+			anounceTime = room.EndTime.Add(-gap)
 		} else {
-			anounceTime = roomInfo.StartTime.Add(gap)
+			anounceTime = room.StartTime.Add(gap)
 		}
-		s.announcements[AnnounceKey{roomid, announce.AnnounceId}] = Announcements{
+		s.announcements[AnnounceKey{roomid, announce.Id}] = Announcements{
 			anounceTime,
 			announce.Message,
 			announce.UserId,
@@ -294,8 +265,8 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 			continue
 		}
 		isValid := false
-		for _, announce := range roomInfo.Announcements {
-			if announce.AnnounceId == announcekey.announceId {
+		for _, announce := range room.Announcements {
+			if announce.Id == announcekey.announceId {
 				isValid = true
 				break
 			}
@@ -351,88 +322,32 @@ func (s *RoomMgmtService) sortTimes() {
 }
 
 func (s *RoomMgmtService) startRoomStatus(roomId string) {
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		return
-	}
-
-	var room RoomBooking
-	err := json.Unmarshal([]byte(dbRecords), &room)
+	updateStmt := `update "room" set "status"=$1 where "id"=$2`
+	_, err := s.postgresDB.Exec(updateStmt,
+		ROOM_STARTED,
+		roomId)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		return
-	}
-
-	room.Status = ROOM_STARTED
-	roomJSON, err := json.Marshal(room)
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		return
-	}
-	err = s.redisDB.Set(roomId, roomJSON, 0)
-	if err != nil {
-		log.Errorf("Error writing to Database: %s", err)
-		return
+		log.Errorf("could not update database: %s", err)
 	}
 }
 
 func (s *RoomMgmtService) endRoomStatus(roomId string) {
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		return
-	}
-
-	var room RoomBooking
-	err := json.Unmarshal([]byte(dbRecords), &room)
+	updateStmt := `update "room" set "status"=$1 where "id"=$2`
+	_, err := s.postgresDB.Exec(updateStmt,
+		ROOM_ENDED,
+		roomId)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		return
-	}
-
-	room.Status = ROOM_ENDED
-	roomJSON, err := json.Marshal(room)
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		return
-	}
-	err = s.redisDB.Set(roomId, roomJSON, 0)
-	if err != nil {
-		log.Errorf("Error writing to Database: %s", err)
-		return
+		log.Errorf("could not update database: %s", err)
 	}
 }
 
-func (s *RoomMgmtService) sendAnnouncementStatus(roomId, announceId string) {
-	dbRecords := s.redisDB.Get(roomId)
-	if dbRecords == "" {
-		log.Warnf(s.roomNotFound(roomId))
-		return
-	}
-
-	var room RoomBooking
-	err := json.Unmarshal([]byte(dbRecords), &room)
+func (s *RoomMgmtService) sendAnnouncementStatus(announceId string) {
+	updateStmt := `update "announcement" set "status"=$1 where "id"=$2`
+	_, err := s.postgresDB.Exec(updateStmt,
+		ANNOUNCEMENT_SENT,
+		announceId)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		return
-	}
-
-	for id := range room.Announcements {
-		if room.Announcements[id].AnnounceId == announceId {
-			room.Announcements[id].Status = ANNOUNCEMENT_SENT
-			break
-		}
-	}
-	roomJSON, err := json.Marshal(room)
-	if err != nil {
-		log.Errorf("could not encode room to JSON: %s", err)
-		return
-	}
-	err = s.redisDB.Set(roomId, roomJSON, 0)
-	if err != nil {
-		log.Errorf("Error writing to Database: %s", err)
-		return
+		log.Errorf("could not update database: %s", err)
 	}
 }
 
@@ -474,7 +389,7 @@ func (s *RoomMgmtService) sendAnnouncements() {
 		}
 		log.Infof("sendAnnouncements %v, %v", key, s.announcements[key])
 		go s.postMessage(key.roomId, s.announcements[key].message, s.announcements[key].userId)
-		go s.sendAnnouncementStatus(key.roomId, key.announceId)
+		go s.sendAnnouncementStatus(key.announceId)
 		delete(s.announcements, key)
 		toDeleteId = append(toDeleteId, id)
 	}

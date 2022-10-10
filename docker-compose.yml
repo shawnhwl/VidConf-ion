@@ -2,7 +2,7 @@ version: "3.7"
 
 services:
   islb:
-    image: pionwebrtc/ion:latest-islb
+    image: howeli/vidconf-ion_islb:latest
     build:
       dockerfile: ./docker/islb.Dockerfile
       context: .
@@ -15,7 +15,7 @@ services:
       - ionnet
 
   sfu:
-    image: pionwebrtc/ion:latest-sfu
+    image: howeli/vidconf-ion_sfu:latest
     build:
       dockerfile: ./docker/sfu.Dockerfile
       context: .
@@ -31,7 +31,7 @@ services:
       - ionnet
 
   signal:
-    image: pionwebrtc/ion:latest-signal
+    image: howeli/vidconf-ion_signal:latest
     build:
       dockerfile: ./docker/signal.Dockerfile
       context: .
@@ -55,6 +55,7 @@ services:
     depends_on:
       - nats
       - redis
+      - postgres
       - islb
     networks:
       - ionnet
@@ -72,6 +73,7 @@ services:
     depends_on:
       - nats
       - redis
+      - postgres
       - islb
       - app-room
       - signal
@@ -93,6 +95,7 @@ services:
     depends_on:
       - nats
       - redis
+      - postgres
       - islb
       - app-room
       - signal
@@ -114,6 +117,23 @@ services:
     image: redis:6.0.9
     ports:
       - 6379:6379
+    networks:
+      - ionnet
+
+  postgres:
+    image: postgres
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: vidconf
+      POSTGRES_PASSWORD: vidconfPass
+    networks:
+      - ionnet
+
+  adminer:
+    image: adminer
+    ports:
+      - 8080:8080
     networks:
       - ionnet
 

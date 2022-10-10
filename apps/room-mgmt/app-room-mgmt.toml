@@ -1,0 +1,36 @@
+[global]
+# data center id
+dc = "dc1"
+
+[log]
+level = "info"
+# level = "debug"
+
+[nats]
+url = "nats://127.0.0.1:4222"
+
+[postgres]
+addr = "localhost:5432"
+user = "vidconfAdmin"
+password = "vidconfPass"
+database = "vidconfAdmin"
+
+[roommgmt]
+# Polling interval for StartTime, EndTime and AnnounceTime
+pollInSeconds = 1
+# The address the HTTP server will listen on.
+address = "0.0.0.0:7071"
+# Certs path to configure https
+# cert="path/to/cert.pem"
+# key="path/to/key.pem"
+# UserId and UserName used by system to join the room sessions
+system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
+system_username = "Public Announcements"
+
+[webapp]
+# The URL of the webapp
+url = "https://localhost:9090"
+
+[signal]
+# The addr for grpc signalling
+addr = "localhost:5551"

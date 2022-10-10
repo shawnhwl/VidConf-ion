@@ -8,7 +8,6 @@ import (
 	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
-	"github.com/pion/ion/pkg/db"
 	"github.com/pion/ion/pkg/ion"
 	"github.com/pion/ion/pkg/proto"
 	"github.com/pion/ion/pkg/runner"
@@ -27,6 +26,13 @@ type LogConf struct {
 
 type NatsConf struct {
 	URL string `mapstructure:"url"`
+}
+
+type PostgresConf struct {
+	Addr     string `mapstructure:"addr"`
+	User     string `mapstructure:"user"`
+	Password string `mapstructure:"password"`
+	Database string `mapstructure:"database"`
 }
 
 type RoomMgmtConf struct {
@@ -50,7 +56,7 @@ type Config struct {
 	Global   GlobalConf   `mapstructure:"global"`
 	Log      LogConf      `mapstructure:"log"`
 	Nats     NatsConf     `mapstructure:"nats"`
-	Redis    db.Config    `mapstructure:"redis"`
+	Postgres PostgresConf `mapstructure:"postgres"`
 	RoomMgmt RoomMgmtConf `mapstructure:"roommgmt"`
 	WebApp   WebAppConf   `mapstructure:"webapp"`
 	Signal   SignalConf   `mapstructure:"signal"`
