@@ -1172,39 +1172,6 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	if err != nil {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
-	createStmt := `CREATE TABLE IF NOT EXISTS
-		room( id             UUID PRIMARY KEY,
-			  name           TEXT,
-			  status         TEXT NOT NULL,
-			  startTime      TIMESTAMP NOT NULL,
-			  endTime        TIMESTAMP NOT NULL,
-			  allowedUserId  TEXT ARRAY,
-			  earlyEndReason TEXT,
-			  createdBy      TEXT NOT NULL,
-			  createdAt      TIMESTAMP NOT NULL,
-			  updatedBy      TEXT NOT NULL,
-			  updatedAt      TIMESTAMP NOT NULL)`
-	_, err = postgresDB.Exec(createStmt)
-	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
-	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-		announcement( id                    UUID PRIMARY KEY,
-					  room_id               UUID NOT NULL,
-					  status                TEXT NOT NULL,
-					  message               TEXT NOT NULL,
-					  relativeFrom          TEXT,
-					  relativeTimeInSeconds INT,
-					  userId                TEXT ARRAY,
-					  createdBy             TEXT NOT NULL,
-					  createdAt             TIMESTAMP NOT NULL,
-					  updatedBy             TEXT NOT NULL,
-					  updatedAt             TIMESTAMP NOT NULL,
-					  CONSTRAINT fk_room FOREIGN KEY(room_id) REFERENCES room(id) ON DELETE CASCADE)`
-	_, err = postgresDB.Exec(createStmt)
-	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
-	}
 
 	log.Infof("--- Connecting to Room Signal ---")
 	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
@@ -1251,7 +1218,6 @@ func (s *RoomMgmtService) start() {
 	router.DELETE("/rooms/:roomid/users/:userid", s.deleteUsersByUserId)
 	router.PUT("/rooms/:roomid/announcements", s.putAnnouncementsByRoomId)
 	router.DELETE("/rooms/:roomid/announcements", s.deleteAnnouncementsByRoomId)
-	s.testAPI(router)
 
 	if s.conf.RoomMgmt.Cert != "" && s.conf.RoomMgmt.Key != "" {
 		log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
@@ -1260,24 +1226,4 @@ func (s *RoomMgmtService) start() {
 		log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
 		log.Panicf("%s", router.Run(s.conf.RoomMgmt.Addr))
 	}
-}
-
-func (s *RoomMgmtService) testAPI(router *gin.Engine) {
-	router.POST("/rooms/:roomid/:message/:toid", func(c *gin.Context) {
-		roomid := c.Param("roomid")
-		message := c.Param("message")
-		toid := c.Param("toid")
-		log.Infof("POST /rooms/%s/%s/%s", roomid, message, toid)
-		userids := make([]string, 0)
-		if toid != "all" {
-			userids = append(userids, toid)
-		}
-		err := s.postMessage(roomid, message, userids)
-		if err != nil {
-			c.String(http.StatusInternalServerError,
-				"POST /rooms/%s/%s/%s", roomid, message, toid, err.Error())
-			return
-		}
-		c.String(http.StatusOK, "POST /rooms/%s/%s/%s", roomid, message, toid)
-	})
 }
