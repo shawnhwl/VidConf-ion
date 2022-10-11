@@ -53,32 +53,32 @@ func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *Room
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
 	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"room"( "id" UUID PRIMARY KEY,
-										"name" TEXT,
-										"status" TEXT NOT NULL,
-										"startTime" TIMESTAMP NOT NULL,
-										"endTime" TIMESTAMP NOT NULL,
-										"allowedUserId" TEXT ARRAY,
+								"room"( "id"             UUID PRIMARY KEY,
+										"name"           TEXT,
+										"status"         TEXT NOT NULL,
+										"startTime"      TIMESTAMP NOT NULL,
+										"endTime"        TIMESTAMP NOT NULL,
+										"allowedUserId"  TEXT ARRAY,
 										"earlyEndReason" TEXT,
-										"createdBy" TEXT NOT NULL,
-										"createdAt" TIMESTAMP NOT NULL,
-										"updatedBy" TEXT NOT NULL,
-										"updatedAt" TIMESTAMP NOT NULL)`)
+										"createdBy"      TEXT NOT NULL,
+										"createdAt"      TIMESTAMP NOT NULL,
+										"updatedBy"      TEXT NOT NULL,
+										"updatedAt"      TIMESTAMP NOT NULL)`)
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"announcement"( "id" UUID PRIMARY KEY,
-											    "roomId" UUID NOT NULL,
-												"status" TEXT NOT NULL,
-												"message" TEXT NOT NULL,
-												"relativeFrom" TEXT,
-												"relativeTimeInSeconds" INT,
-												"userId" TEXT ARRAY,
-												"createdAt" TIMESTAMP NOT NULL,
-												"createdBy" TEXT NOT NULL,
-												"updatedAt" TIMESTAMP NOT NULL,
-												"updatedBy" TEXT NOT NULL,
+								"announcement"( "id"                    UUID PRIMARY KEY,
+											    "roomId"                UUID NOT NULL,
+												"status"                TEXT NOT NULL,
+												"message"               TEXT NOT NULL,
+												"relativeFrom"          TEXT NOT NULL,
+												"relativeTimeInSeconds" INT NOT NULL,
+												"userId"                TEXT ARRAY,
+												"createdAt"             TIMESTAMP NOT NULL,
+												"createdBy"             TEXT NOT NULL,
+												"updatedAt"             TIMESTAMP NOT NULL,
+												"updatedBy"             TEXT NOT NULL,
 												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`)
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)

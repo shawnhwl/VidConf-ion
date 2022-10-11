@@ -193,7 +193,8 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 										"createdBy",
 										"createdAt",
 										"updatedBy",
-										"updatedAt") values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+										"updatedAt")
+					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err = s.postgresDB.Exec(insertStmt,
 		room.id,
 		room.name,
@@ -685,7 +686,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 		room.name,
 		room.startTime,
 		room.endTime,
-		pq.Array(room.allowedUserId),
+		room.allowedUserId,
 		room.id)
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -756,7 +757,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 					room.announcements[id].message,
 					room.announcements[id].relativeFrom,
 					room.announcements[id].relativeTimeInSeconds,
-					pq.Array(room.announcements[id].userId),
+					room.announcements[id].userId,
 					room.announcements[id].updatedBy,
 					room.announcements[id].updatedAt,
 					room.announcements[id].id)
@@ -819,7 +820,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 													"createdAt",
 													"updatedBy",
 													"updatedAt" )
-					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		_, err := s.postgresDB.Exec(insertStmt,
 			announcement.id,
 			room.id,
@@ -827,7 +828,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 			announcement.message,
 			announcement.relativeFrom,
 			announcement.relativeTimeInSeconds,
-			pq.Array(announcement.userId),
+			announcement.userId,
 			announcement.createdBy,
 			announcement.createdAt,
 			announcement.updatedBy,
@@ -1070,7 +1071,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 					room.announcements[id].message,
 					room.announcements[id].relativeFrom,
 					room.announcements[id].relativeTimeInSeconds,
-					pq.Array(room.announcements[id].userId),
+					room.announcements[id].userId,
 					room.announcements[id].updatedBy,
 					room.announcements[id].updatedAt,
 					room.announcements[id].id)
@@ -1100,7 +1101,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 													"createdAt",
 													"updatedBy",
 													"updatedAt" )
-					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		_, err := s.postgresDB.Exec(insertStmt,
 			announcement.id,
 			room.id,
@@ -1108,7 +1109,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 			announcement.message,
 			announcement.relativeFrom,
 			announcement.relativeTimeInSeconds,
-			pq.Array(announcement.userId),
+			announcement.userId,
 			announcement.createdBy,
 			announcement.createdAt,
 			announcement.updatedBy,
@@ -1153,7 +1154,7 @@ type Terminations struct {
 type Announcements struct {
 	timeTick time.Time
 	message  string
-	userId   []string
+	userId   pq.StringArray
 }
 
 type AnnounceKey struct {
@@ -1206,32 +1207,32 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
 	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"room"( "id" UUID PRIMARY KEY,
-										"name" TEXT,
-										"status" TEXT NOT NULL,
-										"startTime" TIMESTAMP NOT NULL,
-										"endTime" TIMESTAMP NOT NULL,
-										"allowedUserId" TEXT ARRAY,
+								"room"( "id"             UUID PRIMARY KEY,
+										"name"           TEXT,
+										"status"         TEXT NOT NULL,
+										"startTime"      TIMESTAMP NOT NULL,
+										"endTime"        TIMESTAMP NOT NULL,
+										"allowedUserId"  TEXT ARRAY,
 										"earlyEndReason" TEXT,
-										"createdBy" TEXT NOT NULL,
-										"createdAt" TIMESTAMP NOT NULL,
-										"updatedBy" TEXT NOT NULL,
-										"updatedAt" TIMESTAMP NOT NULL)`)
+										"createdBy"      TEXT NOT NULL,
+										"createdAt"      TIMESTAMP NOT NULL,
+										"updatedBy"      TEXT NOT NULL,
+										"updatedAt"      TIMESTAMP NOT NULL)`)
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"announcement"( "id" UUID PRIMARY KEY,
-											    "roomId" UUID NOT NULL,
-												"status" TEXT NOT NULL,
-												"message" TEXT NOT NULL,
-												"relativeFrom" TEXT,
-												"relativeTimeInSeconds" INT,
-												"userId" TEXT ARRAY,
-												"createdAt" TIMESTAMP NOT NULL,
-												"createdBy" TEXT NOT NULL,
-												"updatedAt" TIMESTAMP NOT NULL,
-												"updatedBy" TEXT NOT NULL,
+								"announcement"( "id"                    UUID PRIMARY KEY,
+											    "roomId"                UUID NOT NULL,
+												"status"                TEXT NOT NULL,
+												"message"               TEXT NOT NULL,
+												"relativeFrom"          TEXT NOT NULL,
+												"relativeTimeInSeconds" INT NOT NULL,
+												"userId"                TEXT ARRAY,
+												"createdAt"             TIMESTAMP NOT NULL,
+												"createdBy"             TEXT NOT NULL,
+												"updatedAt"             TIMESTAMP NOT NULL,
+												"updatedBy"             TEXT NOT NULL,
 												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`)
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
