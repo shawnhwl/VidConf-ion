@@ -1,65 +1,72 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
+	"strings"
 
+	"github.com/lib/pq"
 	log "github.com/pion/ion-log"
 )
 
 const (
-	ROOM_BOOKED  string = "Booked"
-	ROOM_STARTED string = "Started"
-	ROOM_ENDED   string = "Ended"
+	ROOM_BOOKED string = "Booked"
+	ROOM_ENDED  string = "Ended"
 )
 
-type Get_RoomBooking struct {
-	Status          string   `json:"status"`
-	RoomName        string   `json:"roomName"`
-	PermittedUserId []string `json:"permittedUserId"`
+type RoomBooking struct {
+	status        string
+	name          string
+	allowedUserId pq.StringArray
 }
 
-func (s *RoomSignalService) getRoomsByRoomid(roomid, uid string) (string, error) {
-	dbRecords := s.rs.redis.Get(roomid)
-	if dbRecords == "" {
-		log.Warnf(roomNotFound(roomid))
-		return "", errors.New(roomNotFound(roomid))
+func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error) {
+	queryStmt := `SELECT "name",
+						 "status",
+						 "allowedUserId" FROM "room" WHERE "id"=$1`
+	rooms := s.rs.postgresDB.QueryRow(queryStmt, roomId)
+	if rooms.Err() != nil {
+		if strings.Contains(rooms.Err().Error(), "no rows in result set") {
+			log.Warnf(roomNotFound(roomId))
+		} else {
+			log.Errorf("could not query database: %s", rooms.Err().Error())
+		}
+		return "", rooms.Err()
 	}
-
-	var get_room Get_RoomBooking
-	err := json.Unmarshal([]byte(dbRecords), &get_room)
+	var booking RoomBooking
+	err := rooms.Scan(&booking.name,
+		&booking.status,
+		&booking.allowedUserId)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		return "", errors.New("database corrupted")
+		return "", err
 	}
 
-	if get_room.Status == ROOM_BOOKED {
-		log.Warnf(roomNotStarted(roomid))
-		return "", errors.New(roomNotStarted(roomid))
+	if booking.status == ROOM_BOOKED {
+		log.Warnf(roomNotStarted(roomId))
+		return "", errors.New(roomNotStarted(roomId))
 	}
 
-	if get_room.Status == ROOM_ENDED {
-		log.Warnf(roomEnded(roomid))
-		return "", errors.New(roomEnded(roomid))
+	if booking.status == ROOM_ENDED {
+		log.Warnf(roomEnded(roomId))
+		return "", errors.New(roomEnded(roomId))
 	}
 
-	isPermitted := false
-	if uid == s.rs.systemUid || len(get_room.PermittedUserId) == 0 {
-		isPermitted = true
+	isAllowed := false
+	if uId == s.rs.systemUid || len(booking.allowedUserId) == 0 {
+		isAllowed = true
 	} else {
-		for _, permittedUserId := range get_room.PermittedUserId {
-			if permittedUserId == uid {
-				isPermitted = true
+		for _, allowedUserId := range booking.allowedUserId {
+			if allowedUserId == uId {
+				isAllowed = true
 				break
 			}
 		}
 	}
-	if !isPermitted {
-		log.Warnf(roomBlocked(roomid, uid))
-		return "", errors.New(roomBlocked(roomid, uid))
+	if !isAllowed {
+		log.Warnf(roomBlocked(roomId, uId))
+		return "", errors.New(roomBlocked(roomId, uId))
 	}
 
-	return get_room.RoomName, nil
+	return booking.name, nil
 }
 
 func roomNotFound(roomId string) string {
@@ -75,5 +82,5 @@ func roomEnded(roomId string) string {
 }
 
 func roomBlocked(roomId, uId string) string {
-	return "UserId '" + uId + "' is not permitted in RoomId '" + roomId + "'"
+	return "UserId '" + uId + "' is denied in RoomId '" + roomId + "'"
 }

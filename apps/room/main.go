@@ -13,11 +13,8 @@ import (
 
 // run as distributed node
 func main() {
-	var confFile, addr, cert, key, logLevel string
+	var confFile, logLevel string
 	flag.StringVar(&confFile, "c", "", "config file")
-	flag.StringVar(&addr, "addr", ":5551", "grpc listening addr")
-	flag.StringVar(&cert, "cert", "", "cert for tls")
-	flag.StringVar(&key, "key", "", "key for tls")
 	flag.StringVar(&logLevel, "l", "info", "log level")
 	flag.Parse()
 

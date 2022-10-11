@@ -939,6 +939,8 @@ func (s *RoomMgmtService) queryRoom(roomid string) (Room, error) {
 						 "updatedAt" FROM "room" WHERE "id"=$1`
 	rooms := s.postgresDB.QueryRow(queryStmt, roomid)
 	if rooms.Err() != nil {
+		errorString := fmt.Sprintf("could not query database: %s", rooms.Err())
+		log.Errorf(errorString)
 		return Room{}, rooms.Err()
 	}
 	var room Room
@@ -1204,7 +1206,7 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
 	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								room(   "id" UUID PRIMARY KEY,
+								"room"( "id" UUID PRIMARY KEY,
 										"name" TEXT,
 										"status" TEXT NOT NULL,
 										"startTime" TIMESTAMP NOT NULL,
@@ -1219,7 +1221,7 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								announcement(   "id" UUID PRIMARY KEY,
+								"announcement"( "id" UUID PRIMARY KEY,
 											    "roomId" UUID NOT NULL,
 												"status" TEXT NOT NULL,
 												"message" TEXT NOT NULL,
@@ -1230,7 +1232,7 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 												"createdBy" TEXT NOT NULL,
 												"updatedAt" TIMESTAMP NOT NULL,
 												"updatedBy" TEXT NOT NULL,
-												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES room(id) ON DELETE CASCADE)`)
+												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`)
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}

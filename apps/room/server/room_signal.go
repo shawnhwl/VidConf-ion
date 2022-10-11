@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io"
 
@@ -258,6 +259,9 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 				Vendor:      res["vendor"],
 			}
 
+			if info.Uid == r.systemUid {
+				continue
+			}
 			err := peer.sendPeerEvent(&room.PeerEvent{
 				State: room.PeerState_JOIN,
 				Peer:  info,
@@ -333,6 +337,6 @@ func (s *RoomSignalService) SendMessage(in *room.Request_SendMessage) (*room.Rep
 
 func (s *RoomSignalService) UpdateRoom(in *room.Request_UpdateRoom) (*room.UpdateRoomReply, error) {
 	// TODO: Do not allow update room for peers that are host
-	reply, err := s.rs.UpdateRoom(nil, in.UpdateRoom)
+	reply, err := s.rs.UpdateRoom(context.TODO(), in.UpdateRoom)
 	return reply, err
 }

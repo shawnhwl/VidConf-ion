@@ -14,6 +14,13 @@ addrs = [":6379"]
 password = ""
 db = 0
 
+[postgres]
+addr = "localhost:5432"
+user = "vidconfAdmin"
+password = "vidconfPass"
+database = "vidconfAdmin"
+
 [roommgmt]
 # UserId and UserName used by system to join the room sessions
+# Must be identical across "app-room.toml", "app-room-mgmt.toml" & "app-room-recorder.toml"
 system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"

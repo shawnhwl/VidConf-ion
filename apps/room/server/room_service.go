@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,19 +22,74 @@ var (
 
 type RoomService struct {
 	room.UnimplementedRoomServiceServer
-	roomLock  sync.RWMutex
-	rooms     map[string]*Room
-	closed    chan struct{}
-	redis     *db.Redis
-	systemUid string
+	roomLock   sync.RWMutex
+	rooms      map[string]*Room
+	closed     chan struct{}
+	redis      *db.Redis
+	postgresDB *sql.DB
+	systemUid  string
 }
 
-func NewRoomService(systemUid string, config db.Config) *RoomService {
+func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *RoomService {
+	log.Infof("--- Connecting to PostgreSql ---")
+	addrSplit := strings.Split(conf.Addr, ":")
+	port, err := strconv.Atoi(addrSplit[1])
+	if err != nil {
+		log.Panicf("invalid port number: %s\n", addrSplit[1])
+	}
+	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		addrSplit[0],
+		port,
+		conf.User,
+		conf.Password,
+		conf.Database)
+	log.Infof("psqlconn: %s", psqlconn)
+	postgresDB, err := sql.Open("postgres", psqlconn)
+	if err != nil {
+		log.Panicf("Unable to connect to database: %v\n", err)
+	}
+	err = postgresDB.Ping()
+	if err != nil {
+		log.Panicf("Unable to ping database: %v\n", err)
+	}
+	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
+								"room"( "id" UUID PRIMARY KEY,
+										"name" TEXT,
+										"status" TEXT NOT NULL,
+										"startTime" TIMESTAMP NOT NULL,
+										"endTime" TIMESTAMP NOT NULL,
+										"allowedUserId" TEXT ARRAY,
+										"earlyEndReason" TEXT,
+										"createdBy" TEXT NOT NULL,
+										"createdAt" TIMESTAMP NOT NULL,
+										"updatedBy" TEXT NOT NULL,
+										"updatedAt" TIMESTAMP NOT NULL)`)
+	if err != nil {
+		log.Panicf("Unable to execute sql statement: %v\n", err)
+	}
+	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
+								"announcement"( "id" UUID PRIMARY KEY,
+											    "roomId" UUID NOT NULL,
+												"status" TEXT NOT NULL,
+												"message" TEXT NOT NULL,
+												"relativeFrom" TEXT,
+												"relativeTimeInSeconds" INT,
+												"userId" TEXT ARRAY,
+												"createdAt" TIMESTAMP NOT NULL,
+												"createdBy" TEXT NOT NULL,
+												"updatedAt" TIMESTAMP NOT NULL,
+												"updatedBy" TEXT NOT NULL,
+												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`)
+	if err != nil {
+		log.Panicf("Unable to execute sql statement: %v\n", err)
+	}
+
 	s := &RoomService{
-		rooms:     make(map[string]*Room),
-		closed:    make(chan struct{}),
-		redis:     db.NewRedis(config),
-		systemUid: systemUid,
+		rooms:      make(map[string]*Room),
+		closed:     make(chan struct{}),
+		redis:      db.NewRedis(config),
+		postgresDB: postgresDB,
+		systemUid:  systemUid,
 	}
 	go s.stat()
 	return s
