@@ -37,31 +37,31 @@ const (
 )
 
 type Announcement struct {
-	Id                    string         `json:"id"`
-	Status                string         `json:"status"`
-	Message               string         `json:"message"`
-	RelativeFrom          string         `json:"relativeFrom"`
-	RelativeTimeInSeconds int64          `json:"relativeTimeInSeconds"`
-	UserId                pq.StringArray `json:"userId"`
-	CreatedBy             string         `json:"createdBy"`
-	CreatedAt             time.Time      `json:"createdAt"`
-	UpdatedBy             string         `json:"updatedBy"`
-	UpdatedAt             time.Time      `json:"updatedAt"`
+	id                    string
+	status                string
+	message               string
+	relativeFrom          string
+	relativeTimeInSeconds int64
+	userId                pq.StringArray
+	createdBy             string
+	createdAt             time.Time
+	updatedBy             string
+	updatedAt             time.Time
 }
 
 type Room struct {
-	Id             string         `json:"id"`
-	Name           string         `json:"name"`
-	Status         string         `json:"status"`
-	StartTime      time.Time      `json:"startTime"`
-	EndTime        time.Time      `json:"endTime"`
-	Announcements  []Announcement `json:"announcements"`
-	AllowedUserId  pq.StringArray `json:"allowedUserId"`
-	EarlyEndReason string         `json:"earlyEndReason"`
-	CreatedBy      string         `json:"createdBy"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedBy      string         `json:"updatedBy"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
+	id             string
+	name           string
+	status         string
+	startTime      time.Time
+	endTime        time.Time
+	announcements  []Announcement
+	allowedUserId  pq.StringArray
+	earlyEndReason string
+	createdBy      string
+	createdAt      time.Time
+	updatedBy      string
+	updatedAt      time.Time
 }
 
 type User struct {
@@ -171,18 +171,18 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 
 	var room Room
 	roomId := uuid.NewString()
-	room.Id = roomId
-	room.Name = ""
-	room.Status = ROOM_BOOKED
-	room.StartTime = *patch_room.StartTime
-	room.EndTime = *patch_room.EndTime
-	room.Announcements = make([]Announcement, 0)
-	room.AllowedUserId = make(pq.StringArray, 0)
-	room.EarlyEndReason = ""
-	room.CreatedBy = *patch_room.Requestor
-	room.CreatedAt = time.Now()
-	room.UpdatedBy = *patch_room.Requestor
-	room.UpdatedAt = room.CreatedAt
+	room.id = roomId
+	room.name = ""
+	room.status = ROOM_BOOKED
+	room.startTime = *patch_room.StartTime
+	room.endTime = *patch_room.EndTime
+	room.announcements = make([]Announcement, 0)
+	room.allowedUserId = make(pq.StringArray, 0)
+	room.earlyEndReason = ""
+	room.createdBy = *patch_room.Requestor
+	room.createdAt = time.Now()
+	room.updatedBy = *patch_room.Requestor
+	room.updatedAt = room.createdAt
 	insertStmt := `insert into "room"(  "id",
 										"name",
 										"status",
@@ -195,17 +195,17 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 										"updatedBy",
 										"updatedAt") values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err = s.postgresDB.Exec(insertStmt,
-		room.Id,
-		room.Name,
-		room.Status,
-		room.StartTime.Format(time.RFC3339),
-		room.EndTime.Format(time.RFC3339),
-		pq.Array(room.AllowedUserId),
-		room.EarlyEndReason,
-		room.CreatedBy,
-		room.CreatedAt.Format(time.RFC3339),
-		room.UpdatedBy,
-		room.UpdatedAt.Format(time.RFC3339))
+		room.id,
+		room.name,
+		room.status,
+		room.startTime,
+		room.endTime,
+		pq.Array(room.allowedUserId),
+		room.earlyEndReason,
+		room.createdBy,
+		room.createdAt,
+		room.updatedBy,
+		room.updatedAt)
 	if err != nil {
 		errorString := fmt.Sprintf("could not insert into database: %s", err)
 		log.Errorf(errorString)
@@ -216,7 +216,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	err = s.patchRoom(&room, patch_room, c)
 	if err != nil {
 		deleteStmt := `delete from "room" where "id"=$1`
-		_, err = s.postgresDB.Exec(deleteStmt, room.Id)
+		_, err = s.postgresDB.Exec(deleteStmt, room.id)
 		if err != nil {
 			log.Errorf("could not delete from database: %s", err)
 		}
@@ -290,7 +290,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	room.UpdatedAt = time.Now()
+	room.updatedAt = time.Now()
 	err = s.patchRoom(&room, patch_room, c)
 	if err != nil {
 		return
@@ -340,15 +340,15 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	} else {
 		timeLeftInSeconds = *delete_room.TimeLeftInSeconds
 	}
-	room.UpdatedBy = *delete_room.Requestor
-	room.UpdatedAt = time.Now()
-	room.EndTime = time.Now().Add(time.Second * time.Duration(timeLeftInSeconds))
+	room.updatedBy = *delete_room.Requestor
+	room.updatedAt = time.Now()
+	room.endTime = time.Now().Add(time.Second * time.Duration(timeLeftInSeconds))
 	if delete_room.Reason == nil {
-		room.EarlyEndReason = "session terminated"
+		room.earlyEndReason = "session terminated"
 	} else if *delete_room.Reason == "" {
-		room.EarlyEndReason = "session terminated"
+		room.earlyEndReason = "session terminated"
 	} else {
-		room.EarlyEndReason = *delete_room.Reason
+		room.earlyEndReason = *delete_room.Reason
 	}
 
 	updateStmt := `update "room" set "updatedBy"=$1,
@@ -356,11 +356,11 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 									 "endTime"=$3,
 									 "earlyEndReason"=$4 where "id"=$5`
 	_, err = s.postgresDB.Exec(updateStmt,
-		room.UpdatedBy,
-		room.UpdatedAt,
-		room.EndTime,
-		room.EarlyEndReason,
-		room.Id)
+		room.updatedBy,
+		room.updatedAt,
+		room.endTime,
+		room.earlyEndReason,
+		room.id)
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -404,7 +404,7 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 		return
 	}
 
-	if room.Status != ROOM_STARTED {
+	if room.status != ROOM_STARTED {
 		log.Warnf(s.roomNotStarted(roomId))
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotStarted(roomId)})
 		return
@@ -452,9 +452,9 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	updateStmt := `update "room" set "updatedBy"=$1,
 									 "updatedAt"=$2 where "id"=$3`
 	_, err = s.postgresDB.Exec(updateStmt,
-		room.UpdatedBy,
-		room.UpdatedAt,
-		room.Id)
+		room.updatedBy,
+		room.updatedAt,
+		room.id)
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -499,9 +499,9 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	room.UpdatedBy = *delete_announce.Requestor
-	room.UpdatedAt = time.Now()
-	if len(room.Announcements) == 0 {
+	room.updatedBy = *delete_announce.Requestor
+	room.updatedAt = time.Now()
+	if len(room.announcements) == 0 {
 		warnString := fmt.Sprintf("roomId '%s' has no announcements in database", roomId)
 		log.Warnf(warnString)
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": warnString})
@@ -515,9 +515,9 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		isDeleteAll = true
 	}
 	if isDeleteAll {
-		room.Announcements = make([]Announcement, 0)
-		deleteStmt := `delete from "announcement" where "room_id"=$1`
-		_, err = s.postgresDB.Exec(deleteStmt, room.Id)
+		room.announcements = make([]Announcement, 0)
+		deleteStmt := `delete from "announcement" where "roomId"=$1`
+		_, err = s.postgresDB.Exec(deleteStmt, room.id)
 		if err != nil {
 			errorString := fmt.Sprintf("could not delete from database: %s", err)
 			log.Errorf(errorString)
@@ -534,8 +534,8 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 			}
 			idMap[announceId] = 1
 			isFound := false
-			for id, announcements := range room.Announcements {
-				if announcements.Id == announceId {
+			for id, announcements := range room.announcements {
+				if announcements.id == announceId {
 					toDeleteId = append(toDeleteId, id)
 					isFound = true
 					break
@@ -558,15 +558,15 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 				return
 			}
 		}
-		room.Announcements = deleteSlices(room.Announcements, toDeleteId)
+		room.announcements = deleteSlices(room.announcements, toDeleteId)
 	}
 
 	updateStmt := `update "room" set "updatedBy"=$1,
 									 "updatedAt"=$2 where "id"=$3`
 	_, err = s.postgresDB.Exec(updateStmt,
-		room.UpdatedBy,
-		room.UpdatedAt,
-		room.Id)
+		room.updatedBy,
+		room.updatedAt,
+		room.id)
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -597,7 +597,7 @@ func (s *RoomMgmtService) getEditableRoom(roomId string, c *gin.Context) (Room, 
 		}
 		return Room{}, err
 	}
-	if room.Status == ROOM_ENDED {
+	if room.status == ROOM_ENDED {
 		log.Warnf(s.roomHasEnded(roomId))
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomHasEnded(roomId)})
 		return Room{}, errors.New(s.roomHasEnded(roomId))
@@ -631,24 +631,24 @@ func (s *RoomMgmtService) patchRoomRequest(patch_room Patch_Room, c *gin.Context
 }
 
 func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Context) error {
-	room.UpdatedBy = *patch_room.Requestor
+	room.updatedBy = *patch_room.Requestor
 	if patch_room.Name != nil {
-		room.Name = *patch_room.Name
+		room.name = *patch_room.Name
 	} else {
-		room.Name = ""
+		room.name = ""
 	}
 	if patch_room.StartTime != nil {
-		room.StartTime = *patch_room.StartTime
-		if room.Status == ROOM_STARTED && room.StartTime.After(time.Now()) {
-			errorString := fmt.Sprintf("RoomId '%s' has started and new startTime is not due", room.Id)
+		room.startTime = *patch_room.StartTime
+		if room.status == ROOM_STARTED && room.startTime.After(time.Now()) {
+			errorString := fmt.Sprintf("RoomId '%s' has started and new startTime is not due", room.id)
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
 			return errors.New(errorString)
 		}
 	}
 	if patch_room.EndTime != nil {
-		room.EndTime = *patch_room.EndTime
-		if room.EndTime.Before(room.StartTime) {
+		room.endTime = *patch_room.EndTime
+		if room.endTime.Before(room.startTime) {
 			errorString := "endtime is before starttime"
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -656,11 +656,11 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 		}
 	}
 	if len(patch_room.AllowedUserId) == 0 {
-		room.AllowedUserId = make(pq.StringArray, 0)
+		room.allowedUserId = make(pq.StringArray, 0)
 	}
 	for _, patchuser := range patch_room.AllowedUserId {
 		isPatched := false
-		for _, user := range room.AllowedUserId {
+		for _, user := range room.allowedUserId {
 			if user == patchuser {
 				isPatched = true
 				break
@@ -670,7 +670,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 			continue
 		}
 
-		room.AllowedUserId = append(room.AllowedUserId, patchuser)
+		room.allowedUserId = append(room.allowedUserId, patchuser)
 	}
 
 	updateStmt := `update "room" set "updatedBy"=$1,
@@ -680,13 +680,13 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 									 "endTime"=$5,
 									 "allowedUserId"=$6 where "id"=$7`
 	_, err := s.postgresDB.Exec(updateStmt,
-		room.UpdatedBy,
-		room.UpdatedAt,
-		room.Name,
-		room.StartTime,
-		room.EndTime,
-		pq.Array(room.AllowedUserId),
-		room.Id)
+		room.updatedBy,
+		room.updatedAt,
+		room.name,
+		room.startTime,
+		room.endTime,
+		pq.Array(room.allowedUserId),
+		room.id)
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -710,28 +710,28 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 		idMap[*patch.Id] = 1
 
 		isPatched := false
-		for id := range room.Announcements {
-			if room.Announcements[id].Id == *patch.Id {
+		for id := range room.announcements {
+			if room.announcements[id].id == *patch.Id {
 				isPatched = true
-				if room.Announcements[id].Status == ANNOUNCEMENT_SENT {
+				if room.announcements[id].status == ANNOUNCEMENT_SENT {
 					errorString := fmt.Sprintf("could not update sent announceId '%s'", *patch.Id)
 					log.Warnf(errorString)
 					c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
 					return errors.New(errorString)
 				}
 				if patch.Message != nil {
-					room.Announcements[id].Message = *patch.Message
+					room.announcements[id].message = *patch.Message
 				}
 				if patch.RelativeFrom != nil {
-					room.Announcements[id].RelativeFrom = *patch.RelativeFrom
+					room.announcements[id].relativeFrom = *patch.RelativeFrom
 				}
 				if patch.RelativeTimeInSeconds != nil {
-					room.Announcements[id].RelativeTimeInSeconds = *patch.RelativeTimeInSeconds
+					room.announcements[id].relativeTimeInSeconds = *patch.RelativeTimeInSeconds
 				}
 				if patch.UserId != nil {
 					for _, newuser := range patch.UserId {
 						isPresent := false
-						for _, olduser := range room.Announcements[id].UserId {
+						for _, olduser := range room.announcements[id].userId {
 							if olduser == newuser {
 								isPresent = true
 								break
@@ -740,11 +740,11 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 						if isPresent {
 							continue
 						}
-						room.Announcements[id].UserId = append(room.Announcements[id].UserId, newuser)
+						room.announcements[id].userId = append(room.announcements[id].userId, newuser)
 					}
 				}
-				room.Announcements[id].UpdatedBy = room.UpdatedBy
-				room.Announcements[id].UpdatedAt = room.UpdatedAt
+				room.announcements[id].updatedBy = room.updatedBy
+				room.announcements[id].updatedAt = room.updatedAt
 
 				updateStmt := `update "announcement" set "message"=$1,
 														 "relativeFrom"=$2,
@@ -753,13 +753,13 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 														 "updatedBy"=$5,
 														 "updatedAt"=$6 where "id"=$7`
 				_, err := s.postgresDB.Exec(updateStmt,
-					room.Announcements[id].Message,
-					room.Announcements[id].RelativeFrom,
-					room.Announcements[id].RelativeTimeInSeconds,
-					pq.Array(room.Announcements[id].UserId),
-					room.Announcements[id].UpdatedBy,
-					room.Announcements[id].UpdatedAt,
-					room.Announcements[id].Id)
+					room.announcements[id].message,
+					room.announcements[id].relativeFrom,
+					room.announcements[id].relativeTimeInSeconds,
+					pq.Array(room.announcements[id].userId),
+					room.announcements[id].updatedBy,
+					room.announcements[id].updatedAt,
+					room.announcements[id].id)
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
 					log.Errorf(errorString)
@@ -774,14 +774,14 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 		}
 
 		var announcement Announcement
-		announcement.Status = ANNOUNCEMENT_QUEUED
-		announcement.Id = *patch.Id
+		announcement.status = ANNOUNCEMENT_QUEUED
+		announcement.id = *patch.Id
 		if patch.Message == nil || *patch.Message == "" {
 			log.Warnf(MISS_ANNOUNCE_MSG)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_MSG})
 			return errors.New(MISS_ANNOUNCE_MSG)
 		}
-		announcement.Message = *patch.Message
+		announcement.message = *patch.Message
 		if patch.RelativeFrom != nil &&
 			*patch.RelativeFrom != FROM_START &&
 			*patch.RelativeFrom != FROM_END {
@@ -790,26 +790,26 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 			return errors.New(MISS_ANNOUNCE_REL)
 		}
 		if patch.RelativeFrom == nil {
-			announcement.RelativeFrom = FROM_END
+			announcement.relativeFrom = FROM_END
 		} else {
-			announcement.RelativeFrom = *patch.RelativeFrom
+			announcement.relativeFrom = *patch.RelativeFrom
 		}
 		if patch.RelativeTimeInSeconds == nil {
 			log.Warnf(MISS_ANNOUNCE_TIME)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_TIME})
 			return errors.New(MISS_ANNOUNCE_TIME)
 		}
-		announcement.RelativeTimeInSeconds = *patch.RelativeTimeInSeconds
-		announcement.UserId = make(pq.StringArray, 0)
-		announcement.UserId = append(announcement.UserId, patch.UserId...)
-		announcement.CreatedBy = room.UpdatedBy
-		announcement.CreatedAt = room.UpdatedAt
-		announcement.UpdatedBy = room.UpdatedBy
-		announcement.UpdatedAt = room.UpdatedAt
-		room.Announcements = append(room.Announcements, announcement)
+		announcement.relativeTimeInSeconds = *patch.RelativeTimeInSeconds
+		announcement.userId = make(pq.StringArray, 0)
+		announcement.userId = append(announcement.userId, patch.UserId...)
+		announcement.createdBy = room.updatedBy
+		announcement.createdAt = room.updatedAt
+		announcement.updatedBy = room.updatedBy
+		announcement.updatedAt = room.updatedAt
+		room.announcements = append(room.announcements, announcement)
 
 		insertStmt := `insert into "announcement"(  "id", 
-													"room_id",
+													"roomId",
 													"status",
 													"message",
 													"relativeFrom",
@@ -821,17 +821,17 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 													"updatedAt" )
 					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		_, err := s.postgresDB.Exec(insertStmt,
-			announcement.Id,
-			room.Id,
-			announcement.Status,
-			announcement.Message,
-			announcement.RelativeFrom,
-			announcement.RelativeTimeInSeconds,
-			pq.Array(announcement.UserId),
-			announcement.CreatedBy,
-			announcement.CreatedAt,
-			announcement.UpdatedBy,
-			announcement.UpdatedAt)
+			announcement.id,
+			room.id,
+			announcement.status,
+			announcement.message,
+			announcement.relativeFrom,
+			announcement.relativeTimeInSeconds,
+			pq.Array(announcement.userId),
+			announcement.createdBy,
+			announcement.createdAt,
+			announcement.updatedBy,
+			announcement.updatedAt)
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
 			log.Errorf(errorString)
@@ -844,7 +844,17 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 }
 
 func (s *RoomMgmtService) queryGetRoom(roomid string, c *gin.Context) (Get_Room, error) {
-	queryStmt := `SELECT * FROM "room" WHERE "id"=$1`
+	queryStmt := `SELECT "id",
+						 "name",
+						 "status",
+						 "startTime",
+						 "endTime",
+						 "allowedUserId",
+						 "earlyEndReason",
+						 "createdBy",
+						 "createdAt",
+						 "updatedBy",
+						 "updatedAt" FROM "room" WHERE "id"=$1`
 	rooms := s.postgresDB.QueryRow(queryStmt, roomid)
 	if rooms.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", rooms.Err())
@@ -872,7 +882,15 @@ func (s *RoomMgmtService) queryGetRoom(roomid string, c *gin.Context) (Get_Room,
 	}
 
 	get_room.Announcements = make([]Get_Announcement, 0)
-	queryStmt = `SELECT * FROM "announcement" WHERE "room_id"=$1`
+	queryStmt = `SELECT "id",
+						"message",
+						"relativeFrom",
+						"relativeTimeInSeconds",
+						"userId",
+						"createdBy",
+						"createdAt",
+						"updatedBy",
+						"updatedAt"	FROM "announcement" WHERE "roomId"=$1`
 	announcements, err := s.postgresDB.Query(queryStmt, roomid)
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
@@ -883,11 +901,7 @@ func (s *RoomMgmtService) queryGetRoom(roomid string, c *gin.Context) (Get_Room,
 	defer announcements.Close()
 	for announcements.Next() {
 		var get_announcement Get_Announcement
-		var id string
-		var status string
 		err = announcements.Scan(&get_announcement.Id,
-			&id,
-			&status,
 			&get_announcement.Message,
 			&get_announcement.RelativeFrom,
 			&get_announcement.RelativeTimeInSeconds,
@@ -912,29 +926,48 @@ func (s *RoomMgmtService) queryGetRoom(roomid string, c *gin.Context) (Get_Room,
 }
 
 func (s *RoomMgmtService) queryRoom(roomid string) (Room, error) {
-	queryStmt := `SELECT * FROM "room" WHERE "id"=$1`
+	queryStmt := `SELECT "id",
+						 "name",
+						 "status",
+						 "startTime",
+						 "endTime",
+						 "allowedUserId",
+						 "earlyEndReason",
+						 "createdBy",
+						 "createdAt",
+						 "updatedBy",
+						 "updatedAt" FROM "room" WHERE "id"=$1`
 	rooms := s.postgresDB.QueryRow(queryStmt, roomid)
 	if rooms.Err() != nil {
 		return Room{}, rooms.Err()
 	}
 	var room Room
-	err := rooms.Scan(&room.Id,
-		&room.Name,
-		&room.Status,
-		&room.StartTime,
-		&room.EndTime,
-		&room.AllowedUserId,
-		&room.EarlyEndReason,
-		&room.CreatedBy,
-		&room.CreatedAt,
-		&room.UpdatedBy,
-		&room.UpdatedAt)
+	err := rooms.Scan(&room.id,
+		&room.name,
+		&room.status,
+		&room.startTime,
+		&room.endTime,
+		&room.allowedUserId,
+		&room.earlyEndReason,
+		&room.createdBy,
+		&room.createdAt,
+		&room.updatedBy,
+		&room.updatedAt)
 	if err != nil {
 		return Room{}, err
 	}
 
-	room.Announcements = make([]Announcement, 0)
-	queryStmt = `SELECT * FROM "announcement" WHERE "room_id"=$1`
+	room.announcements = make([]Announcement, 0)
+	queryStmt = `SELECT "id",
+						"status",
+						"message",
+						"relativeFrom",
+						"relativeTimeInSeconds",
+						"userId",
+						"createdBy",
+						"createdAt",
+						"updatedBy",
+						"updatedAt"	FROM "announcement" WHERE "roomId"=$1`
 	announcements, err := s.postgresDB.Query(queryStmt, roomid)
 	if err != nil {
 		return Room{}, err
@@ -942,30 +975,28 @@ func (s *RoomMgmtService) queryRoom(roomid string) (Room, error) {
 	defer announcements.Close()
 	for announcements.Next() {
 		var announcement Announcement
-		var id string
-		err = announcements.Scan(&announcement.Id,
-			&id,
-			&announcement.Status,
-			&announcement.Message,
-			&announcement.RelativeFrom,
-			&announcement.RelativeTimeInSeconds,
-			&announcement.UserId,
-			&announcement.CreatedBy,
-			&announcement.CreatedAt,
-			&announcement.UpdatedBy,
-			&announcement.UpdatedAt)
+		err = announcements.Scan(&announcement.id,
+			&announcement.status,
+			&announcement.message,
+			&announcement.relativeFrom,
+			&announcement.relativeTimeInSeconds,
+			&announcement.userId,
+			&announcement.createdBy,
+			&announcement.createdAt,
+			&announcement.updatedBy,
+			&announcement.updatedAt)
 		if err != nil {
 			return Room{}, err
 		}
-		room.Announcements = append(room.Announcements, announcement)
+		room.announcements = append(room.announcements, announcement)
 	}
 
 	return room, nil
 }
 
 func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *gin.Context) error {
-	room.UpdatedBy = *patch_room.Requestor
-	room.UpdatedAt = time.Now()
+	room.updatedBy = *patch_room.Requestor
+	room.updatedAt = time.Now()
 
 	idMap := make(map[string]int)
 	for _, patch := range patch_room.Announcements {
@@ -983,14 +1014,14 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 		idMap[*patch.Id] = 1
 
 		var announcement Announcement
-		announcement.Status = ANNOUNCEMENT_QUEUED
-		announcement.Id = *patch.Id
+		announcement.status = ANNOUNCEMENT_QUEUED
+		announcement.id = *patch.Id
 		if patch.Message == nil || *patch.Message == "" {
 			log.Warnf(MISS_ANNOUNCE_MSG)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_MSG})
 			return errors.New(MISS_ANNOUNCE_MSG)
 		}
-		announcement.Message = *patch.Message
+		announcement.message = *patch.Message
 		if patch.RelativeFrom != nil &&
 			*patch.RelativeFrom != FROM_START &&
 			*patch.RelativeFrom != FROM_END {
@@ -999,34 +1030,34 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 			return errors.New(MISS_ANNOUNCE_REL)
 		}
 		if patch.RelativeFrom == nil {
-			announcement.RelativeFrom = FROM_END
+			announcement.relativeFrom = FROM_END
 		} else {
-			announcement.RelativeFrom = *patch.RelativeFrom
+			announcement.relativeFrom = *patch.RelativeFrom
 		}
 		if patch.RelativeTimeInSeconds == nil {
 			log.Warnf(MISS_ANNOUNCE_TIME)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_TIME})
 			return errors.New(MISS_ANNOUNCE_TIME)
 		}
-		announcement.RelativeTimeInSeconds = *patch.RelativeTimeInSeconds
-		announcement.CreatedBy = room.UpdatedBy
-		announcement.CreatedAt = room.UpdatedAt
-		announcement.UpdatedBy = room.UpdatedBy
-		announcement.UpdatedAt = room.UpdatedAt
-		announcement.UserId = make(pq.StringArray, 0)
-		announcement.UserId = append(announcement.UserId, patch.UserId...)
+		announcement.relativeTimeInSeconds = *patch.RelativeTimeInSeconds
+		announcement.createdBy = room.updatedBy
+		announcement.createdAt = room.updatedAt
+		announcement.updatedBy = room.updatedBy
+		announcement.updatedAt = room.updatedAt
+		announcement.userId = make(pq.StringArray, 0)
+		announcement.userId = append(announcement.userId, patch.UserId...)
 
 		isPatched := false
-		for id := range room.Announcements {
-			if room.Announcements[id].Id == *patch.Id {
+		for id := range room.announcements {
+			if room.announcements[id].id == *patch.Id {
 				isPatched = true
-				if room.Announcements[id].Status == ANNOUNCEMENT_SENT {
+				if room.announcements[id].status == ANNOUNCEMENT_SENT {
 					errorString := fmt.Sprintf("could not update sent announceId '%s'", *patch.Id)
 					log.Warnf(errorString)
 					c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
 					return errors.New(errorString)
 				}
-				room.Announcements[id] = announcement
+				room.announcements[id] = announcement
 				updateStmt := `update "announcement" set "message"=$1,
 														 "relativeFrom"=$2,
 														 "relativeTimeInSeconds"=$3,
@@ -1034,13 +1065,13 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 														 "updatedBy"=$5,
 														 "updatedAt"=$6 where "id"=$7`
 				_, err := s.postgresDB.Exec(updateStmt,
-					room.Announcements[id].Message,
-					room.Announcements[id].RelativeFrom,
-					room.Announcements[id].RelativeTimeInSeconds,
-					pq.Array(room.Announcements[id].UserId),
-					room.Announcements[id].UpdatedBy,
-					room.Announcements[id].UpdatedAt,
-					room.Announcements[id].Id)
+					room.announcements[id].message,
+					room.announcements[id].relativeFrom,
+					room.announcements[id].relativeTimeInSeconds,
+					pq.Array(room.announcements[id].userId),
+					room.announcements[id].updatedBy,
+					room.announcements[id].updatedAt,
+					room.announcements[id].id)
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
 					log.Errorf(errorString)
@@ -1055,9 +1086,9 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 			continue
 		}
 
-		room.Announcements = append(room.Announcements, announcement)
+		room.announcements = append(room.announcements, announcement)
 		insertStmt := `insert into "announcement"(  "id", 
-													"room_id",
+													"roomId",
 													"status",
 													"message",
 													"relativeFrom",
@@ -1069,17 +1100,17 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 													"updatedAt" )
 					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		_, err := s.postgresDB.Exec(insertStmt,
-			announcement.Id,
-			room.Id,
-			announcement.Status,
-			announcement.Message,
-			announcement.RelativeFrom,
-			announcement.RelativeTimeInSeconds,
-			pq.Array(announcement.UserId),
-			announcement.CreatedBy,
-			announcement.CreatedAt,
-			announcement.UpdatedBy,
-			announcement.UpdatedAt)
+			announcement.id,
+			room.id,
+			announcement.status,
+			announcement.message,
+			announcement.relativeFrom,
+			announcement.relativeTimeInSeconds,
+			pq.Array(announcement.userId),
+			announcement.createdBy,
+			announcement.createdAt,
+			announcement.updatedBy,
+			announcement.updatedAt)
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
 			log.Errorf(errorString)
@@ -1171,6 +1202,37 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	err = postgresDB.Ping()
 	if err != nil {
 		log.Panicf("Unable to ping database: %v\n", err)
+	}
+	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
+								room(   "id" UUID PRIMARY KEY,
+										"name" TEXT,
+										"status" TEXT NOT NULL,
+										"startTime" TIMESTAMP NOT NULL,
+										"endTime" TIMESTAMP NOT NULL,
+										"allowedUserId" TEXT ARRAY,
+										"earlyEndReason" TEXT,
+										"createdBy" TEXT NOT NULL,
+										"createdAt" TIMESTAMP NOT NULL,
+										"updatedBy" TEXT NOT NULL,
+										"updatedAt" TIMESTAMP NOT NULL)`)
+	if err != nil {
+		log.Panicf("Unable to execute sql statement: %v\n", err)
+	}
+	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
+								announcement(   "id" UUID PRIMARY KEY,
+											    "roomId" UUID NOT NULL,
+												"status" TEXT NOT NULL,
+												"message" TEXT NOT NULL,
+												"relativeFrom" TEXT,
+												"relativeTimeInSeconds" INT,
+												"userId" TEXT ARRAY,
+												"createdAt" TIMESTAMP NOT NULL,
+												"createdBy" TEXT NOT NULL,
+												"updatedAt" TIMESTAMP NOT NULL,
+												"updatedBy" TEXT NOT NULL,
+												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES room(id) ON DELETE CASCADE)`)
+	if err != nil {
+		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 
 	log.Infof("--- Connecting to Room Signal ---")

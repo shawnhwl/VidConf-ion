@@ -198,7 +198,7 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		return
 	}
 
-	if room.Status == ROOM_ENDED {
+	if room.status == ROOM_ENDED {
 		delete(s.roomStarts, roomid)
 		toDeleteId := make([]int, 0)
 		for id, key := range s.roomStartKeys {
@@ -221,9 +221,9 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		return
 	}
 
-	s.roomEnds[roomid] = Terminations{room.EndTime, room.Name, room.EarlyEndReason}
-	if room.Status == ROOM_BOOKED {
-		s.roomStarts[roomid] = StartRooms{room.StartTime, room.Name}
+	s.roomEnds[roomid] = Terminations{room.endTime, room.name, room.earlyEndReason}
+	if room.status == ROOM_BOOKED {
+		s.roomStarts[roomid] = StartRooms{room.startTime, room.name}
 	} else {
 		delete(s.roomStarts, roomid)
 		toDeleteId := make([]int, 0)
@@ -235,27 +235,27 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 		}
 		s.roomStartKeys = deleteSlices(s.roomStartKeys, toDeleteId)
 	}
-	if len(room.Announcements) == 0 {
+	if len(room.announcements) == 0 {
 		s.deleteAnnouncementsByRoom(roomid)
 		return
 	}
 
-	for _, announce := range room.Announcements {
-		if announce.Status == ANNOUNCEMENT_SENT {
-			delete(s.announcements, AnnounceKey{roomid, announce.Id})
+	for _, announce := range room.announcements {
+		if announce.status == ANNOUNCEMENT_SENT {
+			delete(s.announcements, AnnounceKey{roomid, announce.id})
 			continue
 		}
-		gap := time.Duration(announce.RelativeTimeInSeconds) * time.Second
+		gap := time.Duration(announce.relativeTimeInSeconds) * time.Second
 		var anounceTime time.Time
-		if announce.RelativeFrom == FROM_END {
-			anounceTime = room.EndTime.Add(-gap)
+		if announce.relativeFrom == FROM_END {
+			anounceTime = room.endTime.Add(-gap)
 		} else {
-			anounceTime = room.StartTime.Add(gap)
+			anounceTime = room.startTime.Add(gap)
 		}
-		s.announcements[AnnounceKey{roomid, announce.Id}] = Announcements{
+		s.announcements[AnnounceKey{roomid, announce.id}] = Announcements{
 			anounceTime,
-			announce.Message,
-			announce.UserId,
+			announce.message,
+			announce.userId,
 		}
 
 	}
@@ -265,8 +265,8 @@ func (s *RoomMgmtService) updateTimes(roomid string) {
 			continue
 		}
 		isValid := false
-		for _, announce := range room.Announcements {
-			if announce.Id == announcekey.announceId {
+		for _, announce := range room.announcements {
+			if announce.id == announcekey.announceId {
 				isValid = true
 				break
 			}
