@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -171,7 +172,14 @@ func (s *RoomMgmtService) initTimings() {
 	s.announcementKeys = make([]AnnounceKey, 0)
 
 	queryStmt := `SELECT "id" FROM "room" WHERE "status"<>$1`
-	rows, err := s.postgresDB.Query(queryStmt, ROOM_ENDED)
+	var rows *sql.Rows
+	var err error
+	for retry := 0; retry < DB_RETRY; retry++ {
+		rows, err = s.postgresDB.Query(queryStmt, ROOM_ENDED)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Errorf("could not query database: %s", err)
 		return
@@ -323,9 +331,15 @@ func (s *RoomMgmtService) sortTimes() {
 
 func (s *RoomMgmtService) startRoomStatus(roomId string) {
 	updateStmt := `update "room" set "status"=$1 where "id"=$2`
-	_, err := s.postgresDB.Exec(updateStmt,
-		ROOM_STARTED,
-		roomId)
+	var err error
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			ROOM_STARTED,
+			roomId)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
 	}
@@ -333,9 +347,15 @@ func (s *RoomMgmtService) startRoomStatus(roomId string) {
 
 func (s *RoomMgmtService) endRoomStatus(roomId string) {
 	updateStmt := `update "room" set "status"=$1 where "id"=$2`
-	_, err := s.postgresDB.Exec(updateStmt,
-		ROOM_ENDED,
-		roomId)
+	var err error
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			ROOM_ENDED,
+			roomId)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
 	}
@@ -343,9 +363,15 @@ func (s *RoomMgmtService) endRoomStatus(roomId string) {
 
 func (s *RoomMgmtService) sendAnnouncementStatus(announceId string) {
 	updateStmt := `update "announcement" set "status"=$1 where "id"=$2`
-	_, err := s.postgresDB.Exec(updateStmt,
-		ANNOUNCEMENT_SENT,
-		announceId)
+	var err error
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			ANNOUNCEMENT_SENT,
+			announceId)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
 	}

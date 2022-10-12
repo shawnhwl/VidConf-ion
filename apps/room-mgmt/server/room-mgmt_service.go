@@ -34,6 +34,10 @@ const (
 	ROOM_ENDED          string = "Ended"
 	FROM_START          string = "start"
 	FROM_END            string = "end"
+
+	DB_RETRY     int    = 3
+	DUP_PK       string = "duplicate key value violates unique constraint"
+	NOT_FOUND_PK string = "no rows in result set"
 )
 
 type Announcement struct {
@@ -195,18 +199,27 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 										"updatedBy",
 										"updatedAt")
 					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-	_, err = s.postgresDB.Exec(insertStmt,
-		room.id,
-		room.name,
-		room.status,
-		room.startTime,
-		room.endTime,
-		pq.Array(room.allowedUserId),
-		room.earlyEndReason,
-		room.createdBy,
-		room.createdAt,
-		room.updatedBy,
-		room.updatedAt)
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(insertStmt,
+			room.id,
+			room.name,
+			room.status,
+			room.startTime,
+			room.endTime,
+			pq.Array(room.allowedUserId),
+			room.earlyEndReason,
+			room.createdBy,
+			room.createdAt,
+			room.updatedBy,
+			room.updatedAt)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			roomId = uuid.NewString()
+			room.id = roomId
+		}
+	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not insert into database: %s", err)
 		log.Errorf(errorString)
@@ -217,7 +230,12 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	err = s.patchRoom(&room, patch_room, c)
 	if err != nil {
 		deleteStmt := `delete from "room" where "id"=$1`
-		_, err = s.postgresDB.Exec(deleteStmt, room.id)
+		for retry := 0; retry < DB_RETRY; retry++ {
+			_, err = s.postgresDB.Exec(deleteStmt, room.id)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
 			log.Errorf("could not delete from database: %s", err)
 		}
@@ -235,7 +253,14 @@ func (s *RoomMgmtService) getRooms(c *gin.Context) {
 
 	var rooms Rooms
 	rooms.Ids = make(pq.StringArray, 0)
-	rows, err := s.postgresDB.Query(`SELECT "id" FROM "room"`)
+	var rows *sql.Rows
+	var err error
+	for retry := 0; retry < DB_RETRY; retry++ {
+		rows, err = s.postgresDB.Query(`SELECT "id" FROM "room"`)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
 		log.Errorf(errorString)
@@ -356,12 +381,17 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 									 "updatedAt"=$2,
 									 "endTime"=$3,
 									 "earlyEndReason"=$4 where "id"=$5`
-	_, err = s.postgresDB.Exec(updateStmt,
-		room.updatedBy,
-		room.updatedAt,
-		room.endTime,
-		room.earlyEndReason,
-		room.id)
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			room.updatedBy,
+			room.updatedAt,
+			room.endTime,
+			room.earlyEndReason,
+			room.id)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -452,10 +482,15 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 
 	updateStmt := `update "room" set "updatedBy"=$1,
 									 "updatedAt"=$2 where "id"=$3`
-	_, err = s.postgresDB.Exec(updateStmt,
-		room.updatedBy,
-		room.updatedAt,
-		room.id)
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			room.updatedBy,
+			room.updatedAt,
+			room.id)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -518,7 +553,12 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	if isDeleteAll {
 		room.announcements = make([]Announcement, 0)
 		deleteStmt := `delete from "announcement" where "roomId"=$1`
-		_, err = s.postgresDB.Exec(deleteStmt, room.id)
+		for retry := 0; retry < DB_RETRY; retry++ {
+			_, err = s.postgresDB.Exec(deleteStmt, room.id)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not delete from database: %s", err)
 			log.Errorf(errorString)
@@ -551,7 +591,12 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		}
 		deleteStmt := `delete from "announcement" where "id"=$1`
 		for key := range idMap {
-			_, err = s.postgresDB.Exec(deleteStmt, key)
+			for retry := 0; retry < DB_RETRY; retry++ {
+				_, err = s.postgresDB.Exec(deleteStmt, key)
+				if err == nil {
+					break
+				}
+			}
 			if err != nil {
 				errorString := fmt.Sprintf("could not delete from database: %s", err)
 				log.Errorf(errorString)
@@ -564,10 +609,15 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 
 	updateStmt := `update "room" set "updatedBy"=$1,
 									 "updatedAt"=$2 where "id"=$3`
-	_, err = s.postgresDB.Exec(updateStmt,
-		room.updatedBy,
-		room.updatedAt,
-		room.id)
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			room.updatedBy,
+			room.updatedAt,
+			room.id)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -587,7 +637,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 func (s *RoomMgmtService) getEditableRoom(roomId string, c *gin.Context) (Room, error) {
 	room, err := s.queryRoom(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows in result set") {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
 			errorString := fmt.Sprintf("roomId '%s' not found in database", roomId)
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -680,14 +730,20 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 									 "startTime"=$4,
 									 "endTime"=$5,
 									 "allowedUserId"=$6 where "id"=$7`
-	_, err := s.postgresDB.Exec(updateStmt,
-		room.updatedBy,
-		room.updatedAt,
-		room.name,
-		room.startTime,
-		room.endTime,
-		room.allowedUserId,
-		room.id)
+	var err error
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			room.updatedBy,
+			room.updatedAt,
+			room.name,
+			room.startTime,
+			room.endTime,
+			room.allowedUserId,
+			room.id)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
 		log.Errorf(errorString)
@@ -753,14 +809,19 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 														 "userId"=$4,
 														 "updatedBy"=$5,
 														 "updatedAt"=$6 where "id"=$7`
-				_, err := s.postgresDB.Exec(updateStmt,
-					room.announcements[id].message,
-					room.announcements[id].relativeFrom,
-					room.announcements[id].relativeTimeInSeconds,
-					room.announcements[id].userId,
-					room.announcements[id].updatedBy,
-					room.announcements[id].updatedAt,
-					room.announcements[id].id)
+				for retry := 0; retry < DB_RETRY; retry++ {
+					_, err = s.postgresDB.Exec(updateStmt,
+						room.announcements[id].message,
+						room.announcements[id].relativeFrom,
+						room.announcements[id].relativeTimeInSeconds,
+						room.announcements[id].userId,
+						room.announcements[id].updatedBy,
+						room.announcements[id].updatedAt,
+						room.announcements[id].id)
+					if err == nil {
+						break
+					}
+				}
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
 					log.Errorf(errorString)
@@ -821,18 +882,27 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 													"updatedBy",
 													"updatedAt" )
 						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-		_, err := s.postgresDB.Exec(insertStmt,
-			announcement.id,
-			room.id,
-			announcement.status,
-			announcement.message,
-			announcement.relativeFrom,
-			announcement.relativeTimeInSeconds,
-			announcement.userId,
-			announcement.createdBy,
-			announcement.createdAt,
-			announcement.updatedBy,
-			announcement.updatedAt)
+		var err error
+		for retry := 0; retry < DB_RETRY; retry++ {
+			_, err = s.postgresDB.Exec(insertStmt,
+				announcement.id,
+				room.id,
+				announcement.status,
+				announcement.message,
+				announcement.relativeFrom,
+				announcement.relativeTimeInSeconds,
+				announcement.userId,
+				announcement.createdBy,
+				announcement.createdAt,
+				announcement.updatedBy,
+				announcement.updatedAt)
+			if err == nil {
+				break
+			}
+			if strings.Contains(err.Error(), DUP_PK) {
+				break
+			}
+		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
 			log.Errorf(errorString)
@@ -856,7 +926,16 @@ func (s *RoomMgmtService) queryGetRoom(roomid string, c *gin.Context) (Get_Room,
 						 "createdAt",
 						 "updatedBy",
 						 "updatedAt" FROM "room" WHERE "id"=$1`
-	rooms := s.postgresDB.QueryRow(queryStmt, roomid)
+	var rooms *sql.Row
+	for retry := 0; retry < DB_RETRY; retry++ {
+		rooms = s.postgresDB.QueryRow(queryStmt, roomid)
+		if rooms.Err() == nil {
+			break
+		}
+		if strings.Contains(rooms.Err().Error(), NOT_FOUND_PK) {
+			break
+		}
+	}
 	if rooms.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", rooms.Err())
 		log.Errorf(errorString)
@@ -892,7 +971,13 @@ func (s *RoomMgmtService) queryGetRoom(roomid string, c *gin.Context) (Get_Room,
 						"createdAt",
 						"updatedBy",
 						"updatedAt"	FROM "announcement" WHERE "roomId"=$1`
-	announcements, err := s.postgresDB.Query(queryStmt, roomid)
+	var announcements *sql.Rows
+	for retry := 0; retry < DB_RETRY; retry++ {
+		announcements, err = s.postgresDB.Query(queryStmt, roomid)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
 		log.Errorf(errorString)
@@ -938,7 +1023,16 @@ func (s *RoomMgmtService) queryRoom(roomid string) (Room, error) {
 						 "createdAt",
 						 "updatedBy",
 						 "updatedAt" FROM "room" WHERE "id"=$1`
-	rooms := s.postgresDB.QueryRow(queryStmt, roomid)
+	var rooms *sql.Row
+	for retry := 0; retry < DB_RETRY; retry++ {
+		rooms = s.postgresDB.QueryRow(queryStmt, roomid)
+		if rooms.Err() == nil {
+			break
+		}
+		if strings.Contains(rooms.Err().Error(), NOT_FOUND_PK) {
+			break
+		}
+	}
 	if rooms.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", rooms.Err())
 		log.Errorf(errorString)
@@ -971,7 +1065,13 @@ func (s *RoomMgmtService) queryRoom(roomid string) (Room, error) {
 						"createdAt",
 						"updatedBy",
 						"updatedAt"	FROM "announcement" WHERE "roomId"=$1`
-	announcements, err := s.postgresDB.Query(queryStmt, roomid)
+	var announcements *sql.Rows
+	for retry := 0; retry < DB_RETRY; retry++ {
+		announcements, err = s.postgresDB.Query(queryStmt, roomid)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return Room{}, err
 	}
@@ -1055,7 +1155,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 			if room.announcements[id].id == *patch.Id {
 				isPatched = true
 				if room.announcements[id].status == ANNOUNCEMENT_SENT {
-					errorString := fmt.Sprintf("could not update sent announceId '%s'", *patch.Id)
+					errorString := fmt.Sprintf("could not update already announced announceId '%s'", *patch.Id)
 					log.Warnf(errorString)
 					c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
 					return errors.New(errorString)
@@ -1067,14 +1167,20 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 														 "userId"=$4,
 														 "updatedBy"=$5,
 														 "updatedAt"=$6 where "id"=$7`
-				_, err := s.postgresDB.Exec(updateStmt,
-					room.announcements[id].message,
-					room.announcements[id].relativeFrom,
-					room.announcements[id].relativeTimeInSeconds,
-					room.announcements[id].userId,
-					room.announcements[id].updatedBy,
-					room.announcements[id].updatedAt,
-					room.announcements[id].id)
+				var err error
+				for retry := 0; retry < DB_RETRY; retry++ {
+					_, err = s.postgresDB.Exec(updateStmt,
+						room.announcements[id].message,
+						room.announcements[id].relativeFrom,
+						room.announcements[id].relativeTimeInSeconds,
+						room.announcements[id].userId,
+						room.announcements[id].updatedBy,
+						room.announcements[id].updatedAt,
+						room.announcements[id].id)
+					if err == nil {
+						break
+					}
+				}
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
 					log.Errorf(errorString)
@@ -1102,18 +1208,27 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 													"updatedBy",
 													"updatedAt" )
 						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-		_, err := s.postgresDB.Exec(insertStmt,
-			announcement.id,
-			room.id,
-			announcement.status,
-			announcement.message,
-			announcement.relativeFrom,
-			announcement.relativeTimeInSeconds,
-			announcement.userId,
-			announcement.createdBy,
-			announcement.createdAt,
-			announcement.updatedBy,
-			announcement.updatedAt)
+		var err error
+		for retry := 0; retry < DB_RETRY; retry++ {
+			_, err = s.postgresDB.Exec(insertStmt,
+				announcement.id,
+				room.id,
+				announcement.status,
+				announcement.message,
+				announcement.relativeFrom,
+				announcement.relativeTimeInSeconds,
+				announcement.userId,
+				announcement.createdBy,
+				announcement.createdAt,
+				announcement.updatedBy,
+				announcement.updatedAt)
+			if err == nil {
+				break
+			}
+			if strings.Contains(err.Error(), DUP_PK) {
+				break
+			}
+		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
 			log.Errorf(errorString)
@@ -1198,42 +1313,65 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		config.Postgres.Password,
 		config.Postgres.Database)
 	log.Infof("psqlconn: %s", psqlconn)
-	postgresDB, err := sql.Open("postgres", psqlconn)
+	var postgresDB *sql.DB
+	for retry := 0; retry < DB_RETRY; retry++ {
+		postgresDB, err = sql.Open("postgres", psqlconn)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to connect to database: %v\n", err)
 	}
-	err = postgresDB.Ping()
+	for retry := 0; retry < DB_RETRY; retry++ {
+		err = postgresDB.Ping()
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
-	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"room"( "id"             UUID PRIMARY KEY,
-										"name"           TEXT,
-										"status"         TEXT NOT NULL,
-										"startTime"      TIMESTAMP NOT NULL,
-										"endTime"        TIMESTAMP NOT NULL,
-										"allowedUserId"  TEXT ARRAY,
-										"earlyEndReason" TEXT,
-										"createdBy"      TEXT NOT NULL,
-										"createdAt"      TIMESTAMP NOT NULL,
-										"updatedBy"      TEXT NOT NULL,
-										"updatedAt"      TIMESTAMP NOT NULL)`)
+	createStmt := `CREATE TABLE IF NOT EXISTS
+					 "room"( "id"             UUID PRIMARY KEY,
+							 "name"           TEXT,
+							 "status"         TEXT NOT NULL,
+							 "startTime"      TIMESTAMP NOT NULL,
+							 "endTime"        TIMESTAMP NOT NULL,
+							 "allowedUserId"  TEXT ARRAY,
+							 "earlyEndReason" TEXT,
+							 "createdBy"      TEXT NOT NULL,
+							 "createdAt"      TIMESTAMP NOT NULL,
+							 "updatedBy"      TEXT NOT NULL,
+							 "updatedAt"      TIMESTAMP NOT NULL)`
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"announcement"( "id"                    UUID PRIMARY KEY,
-											    "roomId"                UUID NOT NULL,
-												"status"                TEXT NOT NULL,
-												"message"               TEXT NOT NULL,
-												"relativeFrom"          TEXT NOT NULL,
-												"relativeTimeInSeconds" INT NOT NULL,
-												"userId"                TEXT ARRAY,
-												"createdAt"             TIMESTAMP NOT NULL,
-												"createdBy"             TEXT NOT NULL,
-												"updatedAt"             TIMESTAMP NOT NULL,
-												"updatedBy"             TEXT NOT NULL,
-												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`)
+	createStmt = `CREATE TABLE IF NOT EXISTS
+					 "announcement"( "id"                    UUID PRIMARY KEY,
+									 "roomId"                UUID NOT NULL,
+									 "status"                TEXT NOT NULL,
+									 "message"               TEXT NOT NULL,
+									 "relativeFrom"          TEXT NOT NULL,
+									 "relativeTimeInSeconds" INT NOT NULL,
+									 "userId"                TEXT ARRAY,
+									 "createdAt"             TIMESTAMP NOT NULL,
+									 "createdBy"             TEXT NOT NULL,
+									 "updatedAt"             TIMESTAMP NOT NULL,
+									 "updatedBy"             TEXT NOT NULL,
+									 CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}

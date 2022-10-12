@@ -44,42 +44,65 @@ func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *Room
 		conf.Password,
 		conf.Database)
 	log.Infof("psqlconn: %s", psqlconn)
-	postgresDB, err := sql.Open("postgres", psqlconn)
+	var postgresDB *sql.DB
+	for retry := 0; retry < DB_RETRY; retry++ {
+		postgresDB, err = sql.Open("postgres", psqlconn)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to connect to database: %v\n", err)
 	}
-	err = postgresDB.Ping()
+	for retry := 0; retry < DB_RETRY; retry++ {
+		err = postgresDB.Ping()
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
-	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"room"( "id"             UUID PRIMARY KEY,
-										"name"           TEXT,
-										"status"         TEXT NOT NULL,
-										"startTime"      TIMESTAMP NOT NULL,
-										"endTime"        TIMESTAMP NOT NULL,
-										"allowedUserId"  TEXT ARRAY,
-										"earlyEndReason" TEXT,
-										"createdBy"      TEXT NOT NULL,
-										"createdAt"      TIMESTAMP NOT NULL,
-										"updatedBy"      TEXT NOT NULL,
-										"updatedAt"      TIMESTAMP NOT NULL)`)
+	createStmt := `CREATE TABLE IF NOT EXISTS
+					 "room"( "id"             UUID PRIMARY KEY,
+							 "name"           TEXT,
+							 "status"         TEXT NOT NULL,
+							 "startTime"      TIMESTAMP NOT NULL,
+							 "endTime"        TIMESTAMP NOT NULL,
+							 "allowedUserId"  TEXT ARRAY,
+							 "earlyEndReason" TEXT,
+							 "createdBy"      TEXT NOT NULL,
+							 "createdAt"      TIMESTAMP NOT NULL,
+							 "updatedBy"      TEXT NOT NULL,
+							 "updatedAt"      TIMESTAMP NOT NULL)`
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	_, err = postgresDB.Exec(`CREATE TABLE IF NOT EXISTS
-								"announcement"( "id"                    UUID PRIMARY KEY,
-											    "roomId"                UUID NOT NULL,
-												"status"                TEXT NOT NULL,
-												"message"               TEXT NOT NULL,
-												"relativeFrom"          TEXT NOT NULL,
-												"relativeTimeInSeconds" INT NOT NULL,
-												"userId"                TEXT ARRAY,
-												"createdAt"             TIMESTAMP NOT NULL,
-												"createdBy"             TEXT NOT NULL,
-												"updatedAt"             TIMESTAMP NOT NULL,
-												"updatedBy"             TEXT NOT NULL,
-												CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`)
+	createStmt = `CREATE TABLE IF NOT EXISTS
+					 "announcement"( "id"                    UUID PRIMARY KEY,
+									 "roomId"                UUID NOT NULL,
+									 "status"                TEXT NOT NULL,
+									 "message"               TEXT NOT NULL,
+									 "relativeFrom"          TEXT NOT NULL,
+									 "relativeTimeInSeconds" INT NOT NULL,
+									 "userId"                TEXT ARRAY,
+									 "createdAt"             TIMESTAMP NOT NULL,
+									 "createdBy"             TEXT NOT NULL,
+									 "updatedAt"             TIMESTAMP NOT NULL,
+									 "updatedBy"             TEXT NOT NULL,
+									 CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}

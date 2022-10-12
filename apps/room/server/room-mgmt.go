@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -11,6 +12,9 @@ import (
 const (
 	ROOM_BOOKED string = "Booked"
 	ROOM_ENDED  string = "Ended"
+
+	DB_RETRY     int    = 3
+	NOT_FOUND_PK string = "no rows in result set"
 )
 
 type RoomBooking struct {
@@ -23,9 +27,18 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error)
 	queryStmt := `SELECT "name",
 						 "status",
 						 "allowedUserId" FROM "room" WHERE "id"=$1`
-	rooms := s.rs.postgresDB.QueryRow(queryStmt, roomId)
+	var rooms *sql.Row
+	for retry := 0; retry < DB_RETRY; retry++ {
+		rooms = s.rs.postgresDB.QueryRow(queryStmt, roomId)
+		if rooms.Err() == nil {
+			break
+		}
+		if strings.Contains(rooms.Err().Error(), NOT_FOUND_PK) {
+			break
+		}
+	}
 	if rooms.Err() != nil {
-		if strings.Contains(rooms.Err().Error(), "no rows in result set") {
+		if strings.Contains(rooms.Err().Error(), NOT_FOUND_PK) {
 			log.Warnf(roomNotFound(roomId))
 		} else {
 			log.Errorf("could not query database: %s", rooms.Err().Error())
