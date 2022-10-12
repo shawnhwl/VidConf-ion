@@ -30,6 +30,7 @@ scripts-stop-services:
 	./scripts/all stop
 
 docker-start-services:
+	mkdir -p ~/minio/data
 	docker-compose pull
 	docker-compose -f docker-compose.yml up
 
