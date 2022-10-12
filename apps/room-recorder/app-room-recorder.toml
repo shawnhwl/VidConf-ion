@@ -2,21 +2,22 @@
 level = "info"
 # level = "debug"
 
-[redis]
-addrs = [":6379"]
-password = ""
-db = 0
+[postgres]
+addr = "localhost:5432"
+user = "vidconfAdmin"
+password = "vidconfPass"
+database = "vidconf"
 
 [recorder]
 # The address the monitoring server will listen on.
-address = "0.0.0.0:7071"
+addr = "0.0.0.0:7071"
 # Certs path to configure https
 # cert="path/to/cert.pem"
 # key="path/to/key.pem"
 # Roomid to record session
-roomid = "73979b1d-0b55-4ae1-adc7-087d550bb9d5"
-# time in seconds to per chopped section
-choppedInSeconds = 1800
+roomid = "590f9c5c-5462-4fba-be00-5eaf7aaffa6f"
+# time in seconds per chopped section
+choppedInSeconds = 5
 # UserId and UserName used by system to join the room sessions
 system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
 system_username = "Public Announcements"

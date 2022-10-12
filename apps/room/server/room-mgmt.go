@@ -33,16 +33,9 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error)
 		if rooms.Err() == nil {
 			break
 		}
-		if strings.Contains(rooms.Err().Error(), NOT_FOUND_PK) {
-			break
-		}
 	}
 	if rooms.Err() != nil {
-		if strings.Contains(rooms.Err().Error(), NOT_FOUND_PK) {
-			log.Warnf(roomNotFound(roomId))
-		} else {
-			log.Errorf("could not query database: %s", rooms.Err().Error())
-		}
+		log.Errorf("could not query database: %s", rooms.Err().Error())
 		return "", rooms.Err()
 	}
 	var booking RoomBooking
@@ -50,7 +43,11 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error)
 		&booking.status,
 		&booking.allowedUserId)
 	if err != nil {
-		return "", err
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			return "", errors.New(roomNotFound(roomId))
+		} else {
+			return "", err
+		}
 	}
 
 	if booking.status == ROOM_BOOKED {

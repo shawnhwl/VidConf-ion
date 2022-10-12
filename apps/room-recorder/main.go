@@ -33,9 +33,11 @@ func main() {
 	log.Infof("--- Starting Room-Recorder ---")
 
 	quitCh := make(chan os.Signal, 1)
-	go recorder.NewRoomRecorder(conf, quitCh)
+	roomRecorder := recorder.NewRoomRecorder(conf, quitCh)
+	go roomRecorder.Start()
 
 	// Press Ctrl+C to exit the process
 	signal.Notify(quitCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	<-quitCh
+	roomRecorder.RecordData()
 }

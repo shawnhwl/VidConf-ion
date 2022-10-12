@@ -13,7 +13,7 @@ url = "nats://127.0.0.1:4222"
 addr = "localhost:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
-database = "vidconfAdmin"
+database = "vidconf"
 
 [roommgmt]
 # Polling interval for StartTime, EndTime and AnnounceTime

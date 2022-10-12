@@ -13,7 +13,7 @@ url = "nats://nats:4222"
 addr = "postgres:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
-database = "vidconfAdmin"
+database = "vidconf"
 
 [roommgmt]
 # Polling interval for StartTime, EndTime and AnnounceTime

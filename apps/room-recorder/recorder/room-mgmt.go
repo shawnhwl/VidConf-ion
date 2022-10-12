@@ -1,44 +1,57 @@
 package recorder
 
 import (
-	"encoding/json"
+	"database/sql"
 	"errors"
+	"strings"
 
 	log "github.com/pion/ion-log"
 )
 
 const (
-	ROOM_BOOKED  string = "Booked"
-	ROOM_STARTED string = "Started"
-	ROOM_ENDED   string = "Ended"
+	ROOM_BOOKED string = "Booked"
+	ROOM_ENDED  string = "Ended"
+
+	DB_RETRY     int    = 3
+	DUP_PK       string = "duplicate key value violates unique constraint"
+	NOT_FOUND_PK string = "no rows in result set"
 )
 
-type Get_RoomBooking struct {
-	Status string `json:"status"`
+type RoomBooking struct {
+	status string
 }
 
-func (s *RoomRecord) getRoomsByRoomid(roomid string) error {
-	dbRecords := s.redisDB.Get(roomid)
-	if dbRecords == "" {
-		log.Warnf(roomNotFound(roomid))
-		return errors.New(roomNotFound(roomid))
+func (s *RoomRecorder) getRoomsByRoomid(roomId string) error {
+	queryStmt := `SELECT "status" FROM "room" WHERE "id"=$1`
+	var rooms *sql.Row
+	for retry := 0; retry < DB_RETRY; retry++ {
+		rooms = s.postgresDB.QueryRow(queryStmt, roomId)
+		if rooms.Err() == nil {
+			break
+		}
 	}
-
-	var get_room Get_RoomBooking
-	err := json.Unmarshal([]byte(dbRecords), &get_room)
+	if rooms.Err() != nil {
+		log.Panicf("could not query database: %s", rooms.Err().Error())
+		return rooms.Err()
+	}
+	var booking RoomBooking
+	err := rooms.Scan(&booking.status)
 	if err != nil {
-		log.Errorf("could not decode booking records: %s", err)
-		return errors.New("database corrupted")
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			return errors.New(roomNotFound(roomId))
+		} else {
+			return err
+		}
 	}
 
-	if get_room.Status == ROOM_BOOKED {
-		log.Warnf(roomNotStarted(roomid))
-		return errors.New(roomNotStarted(roomid))
+	if booking.status == ROOM_BOOKED {
+		log.Panicf(roomNotStarted(roomId))
+		return errors.New(roomNotStarted(roomId))
 	}
 
-	if get_room.Status == ROOM_ENDED {
-		log.Warnf(roomEnded(roomid))
-		return errors.New(roomEnded(roomid))
+	if booking.status == ROOM_ENDED {
+		log.Panicf(roomEnded(roomId))
+		return errors.New(roomEnded(roomId))
 	}
 
 	return nil
