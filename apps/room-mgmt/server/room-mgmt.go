@@ -38,8 +38,6 @@ type PostgresConf struct {
 type RoomMgmtConf struct {
 	PollInSeconds  int    `mapstructure:"pollInSeconds"`
 	Addr           string `mapstructure:"address"`
-	Cert           string `mapstructure:"cert"`
-	Key            string `mapstructure:"key"`
 	SystemUid      string `mapstructure:"system_userid"`
 	SystemUsername string `mapstructure:"system_username"`
 }

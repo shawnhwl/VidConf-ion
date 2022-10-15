@@ -19,10 +19,7 @@ database = "vidconf"
 # Polling interval for StartTime, EndTime and AnnounceTime
 pollInSeconds = 1
 # The address the HTTP server will listen on.
-address = "0.0.0.0:7071"
-# Certs path to configure https
-# cert="path/to/cert.pem"
-# key="path/to/key.pem"
+address = "0.0.0.0:7070"
 # UserId and UserName used by system to join the room sessions
 system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
 system_username = "Public Announcements"

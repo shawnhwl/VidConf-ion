@@ -13,6 +13,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/improbable-eng/grpc-web v0.14.1
 	github.com/jhump/protoreflect v1.8.2
+	github.com/minio/minio-go/v7 v7.0.40
 	github.com/nats-io/nats.go v1.12.0
 	github.com/pion/ion-log v1.2.2
 	github.com/pion/ion-sdk-go v0.7.0
@@ -32,7 +33,6 @@ require (
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.1.0 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
-	github.com/minio/minio-go/v7 v7.0.40 // indirect
 	github.com/minio/sha256-simd v1.0.0 // indirect
 	github.com/rs/xid v1.4.0 // indirect
 )

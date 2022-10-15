@@ -92,6 +92,11 @@ services:
     ports:
       # Dev port
       - 9090:9090
+      # reverse-proxy for minio
+      - 9002:9002
+      - 9003:9003
+      # reverse-proxy for room-mgmt
+      - 7071:7071
     depends_on:
       - nats
       - redis
@@ -100,6 +105,7 @@ services:
       - app-room
       - signal
       - app-room-mgmt
+      - minio
     networks:
       - ionnet
     environment:
@@ -121,7 +127,7 @@ services:
       - ionnet
 
   postgres:
-    image: postgres
+    image: postgres:14.5-alpine
     ports:
       - 5432:5432
     environment:
@@ -139,8 +145,8 @@ services:
       - ionnet
 
   minio:
-    image: quay.io/minio/minio
-    command: server  /data --console-address ":9001"
+    image: minio/minio:latest
+    command: server /data --console-address ":9001" --address ":9000"
     ports:
       - 9000:9000
       - 9001:9001
@@ -148,7 +154,7 @@ services:
       MINIO_ROOT_USER: minioAdmin
       MINIO_ROOT_PASSWORD: minioPass
     volumes:
-      - ~/minio/data:/data
+      - "~/minio/data:/data"
     networks:
       - ionnet
 

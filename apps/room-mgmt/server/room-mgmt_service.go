@@ -1423,11 +1423,6 @@ func (s *RoomMgmtService) start() {
 	router.PUT("/rooms/:roomid/announcements", s.putAnnouncementsByRoomId)
 	router.DELETE("/rooms/:roomid/announcements", s.deleteAnnouncementsByRoomId)
 
-	if s.conf.RoomMgmt.Cert != "" && s.conf.RoomMgmt.Key != "" {
-		log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
-		log.Panicf("%s", router.RunTLS(s.conf.RoomMgmt.Addr, s.conf.RoomMgmt.Cert, s.conf.RoomMgmt.Key))
-	} else {
-		log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
-		log.Panicf("%s", router.Run(s.conf.RoomMgmt.Addr))
-	}
+	log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
+	log.Panicf("%s", router.Run(s.conf.RoomMgmt.Addr))
 }

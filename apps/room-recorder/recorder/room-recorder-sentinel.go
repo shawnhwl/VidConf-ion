@@ -1,12 +1,17 @@
 package recorder
 
 import (
+	"bytes"
+	"context"
+	"encoding/gob"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	minio "github.com/minio/minio-go/v7"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/rtcp"
@@ -14,18 +19,22 @@ import (
 )
 
 func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-	log.Warnf("onTrack track: %+v", track)
-	log.Warnf("onTrack receiver: %+v", receiver)
-	s.onTracks = append(s.onTracks,
-		OnTrackRecord{time.Since(s.startTime),
-			TrackRemote{
-				track.ID(),
-				track.StreamID(),
-				track.PayloadType(),
-				track.Kind(),
-				track.SSRC(),
-				track.Codec(),
-				track.RID()}})
+	log.Infof("onTrack track: %+v", track)
+	log.Infof("onTrack receiver: %+v", receiver)
+
+	onTrackRecord := OnTrackRecord{time.Since(s.startTime),
+		track.ID(),
+		TrackRemote{
+			track.ID(),
+			track.StreamID(),
+			track.PayloadType(),
+			track.Kind(),
+			track.SSRC(),
+			track.Codec(),
+			track.RID()},
+		uuid.NewString(),
+		make([]TrackRecord, 0)}
+	s.onTracks = append(s.onTracks, onTrackRecord)
 	// Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -41,7 +50,6 @@ func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPRe
 	log.Infof("Track has started, of type %d: %s \n", track.PayloadType(), codecName)
 	trackId := track.ID()
 	s.tracksSavedId[trackId] = 0
-	s.tracks[trackId] = make([]TrackRecord, 0)
 	buf := make([]byte, 65536)
 	for {
 		readCnt, _, readErr := track.Read(buf)
@@ -56,12 +64,13 @@ func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPRe
 		if readCnt == 0 {
 			continue
 		}
-		s.tracks[trackId] = append(s.tracks[trackId], TrackRecord{time.Since(s.startTime), buf[:readCnt]})
+		onTrackRecord.tracks = append(onTrackRecord.tracks,
+			TrackRecord{time.Since(s.startTime), buf[:readCnt]})
 	}
 }
 
 func (s *RoomRecorder) onDataChannel(dc *webrtc.DataChannel) {
-	// TBD
+	// TBD onDataChannel
 	log.Warnf("Not Implemented onDataChannel: %+v", dc)
 }
 
@@ -84,14 +93,13 @@ func (s *RoomRecorder) onTrackEvent(event sdk.TrackEvent) {
 }
 
 func (s *RoomRecorder) onSpeaker(event []string) {
-	// TBD
+	// TBD onSpeaker
 	log.Warnf("Not Implemented onSpeaker: %+v", event)
 }
 
 func (s *RoomRecorder) onJoin(success bool, info sdk.RoomInfo, err error) {
 	log.Infof("OnJoin success = %v, info = %v, err = %v", success, info, err)
 
-	// subscribe rtp from sessoin
 	s.roomRTC.OnTrack = s.onTrack
 	s.roomRTC.OnDataChannel = s.onDataChannel
 	s.roomRTC.OnError = s.onError
@@ -185,8 +193,8 @@ func (s *RoomRecorder) RecordData() {
 	onTracksSavedId := len(s.onTracks)
 	chatsSavedId := len(s.chats)
 	tracksSavedId := make(map[string]int)
-	for key := range s.tracks {
-		tracksSavedId[key] = len(s.tracks[key])
+	for _, onTracks := range s.onTracks {
+		tracksSavedId[onTracks.trackId] = len(onTracks.tracks)
 	}
 
 	go s.updateRoomRecord()
@@ -205,16 +213,14 @@ func (s *RoomRecorder) RecordData() {
 		id++
 		s.onTracksSavedId = id
 	}
-	for id := s.chatsSavedId; id < chatsSavedId; {
-		// chats         []ChatRecord
-		id++
-		s.chatsSavedId = id
-	}
+
+	go s.insertChats(s.chatsSavedId, chatsSavedId)
+	s.chatsSavedId = chatsSavedId
+
 	for key := range tracksSavedId {
 		for id := s.tracksSavedId[key]; id < tracksSavedId[key]; {
-			// tracks        map[string][]TrackRecord
-			id++
-			s.tracksSavedId[key] = id
+			go s.insertTracks(key, s.chatsSavedId, chatsSavedId)
+			s.tracksSavedId[key] = tracksSavedId[key]
 		}
 	}
 }
@@ -344,10 +350,9 @@ func (s *RoomRecorder) insertOnTracks(id int) {
 											"timeElapsed",
 											"trackRemote")
 					values($1, $2, $3, $4)`
-	dbId := uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
-			dbId,
+			s.onTracks[id].dbId,
 			s.roomRecordId,
 			s.onTracks[id].timeElapsed,
 			trackRemote)
@@ -355,10 +360,141 @@ func (s *RoomRecorder) insertOnTracks(id int) {
 			break
 		}
 		if strings.Contains(err.Error(), DUP_PK) {
-			dbId = uuid.NewString()
+			s.onTracks[id].dbId = uuid.NewString()
 		}
 	}
 	if err != nil {
 		log.Panicf("could not insert into database: %s", err)
+	}
+}
+
+func (s *RoomRecorder) insertChats(startId, endId int) {
+	var err error
+	insertStmt := `insert into "chatStream"("id",
+											"roomRecordId",
+											"timeElapsed",
+											"filepath")
+					values($1, $2, $3, $4)`
+	filename := uuid.NewString()
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(insertStmt,
+			filename,
+			s.roomRecordId,
+			s.chats[startId].TimeElapsed,
+			filename)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			filename = uuid.NewString()
+		}
+	}
+	if err != nil {
+		log.Panicf("could not insert into database: %s", err)
+	}
+
+	data := new(bytes.Buffer)
+	err = json.NewEncoder(data).Encode(s.chats[startId:endId])
+	if err != nil {
+		log.Panicf("chat encoding error:", err)
+	}
+	uploadInfo, err := s.minioClient.PutObject(context.Background(),
+		s.bucketName,
+		filename,
+		data,
+		int64(data.Len()),
+		minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		log.Panicf("could not upload file: %s", err)
+	}
+	log.Infof("successfully uploaded bytes: ", uploadInfo)
+}
+
+func (s *RoomRecorder) insertTracks(key string, startId, endId int) {
+	if startId >= endId {
+		return
+	}
+	var trackId int
+	for id := range s.onTracks {
+		if s.onTracks[id].trackId == key {
+			trackId = id
+			break
+		}
+	}
+	var err error
+	insertStmt := `insert into "trackStream"(   "id",
+												"onTrackId",
+												"timeElapsed",
+												"filepath")
+					values($1, $2, $3, $4)`
+	filename := uuid.NewString()
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = s.postgresDB.Exec(insertStmt,
+			filename,
+			s.onTracks[trackId].dbId,
+			s.onTracks[trackId].tracks[startId].TimeElapsed,
+			filename)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			filename = uuid.NewString()
+		}
+	}
+	if err != nil {
+		log.Panicf("could not insert into database: %s", err)
+	}
+
+	data := new(bytes.Buffer)
+	err = gob.NewEncoder(data).Encode(s.onTracks[trackId].tracks[startId:endId])
+	if err != nil {
+		log.Panicf("track encoding error:", err)
+	}
+	uploadInfo, err := s.minioClient.PutObject(context.Background(),
+		s.bucketName,
+		filename,
+		data,
+		int64(data.Len()),
+		minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		log.Panicf("could not upload file: %s", err)
+	}
+	log.Infof("successfully uploaded bytes: ", uploadInfo)
+}
+
+func (s *RoomRecorder) test() {
+	// file, err := os.Open("app-room-recorder.toml")
+	// if err != nil {
+	// 	log.Errorf("error opening file: %s", err)
+	// 	return
+	// }
+	// defer file.Close()
+
+	// fileStat, err := file.Stat()
+	// if err != nil {
+	// 	log.Errorf("error accessing file: %s", err)
+	// 	return
+	// }
+
+	// uploadInfo, err := s.minioClient.PutObject(context.Background(), s.bucketName, "myobject", file, fileStat.Size(), minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	// if err != nil {
+	// 	log.Errorf("error uploading file: %s", err)
+	// 	return
+	// }
+	// log.Infof("successfully uploaded bytes: ", uploadInfo)
+
+	object, err := s.minioClient.GetObject(context.Background(), s.bucketName, "myobject", minio.GetObjectOptions{})
+	if err != nil {
+		log.Errorf("error downloading file: %s", err)
+		return
+	}
+	localFile, err := os.Create("local-file.toml")
+	if err != nil {
+		log.Errorf("error creating file: %s", err)
+		return
+	}
+	if _, err = io.Copy(localFile, object); err != nil {
+		log.Errorf("error copying file: %s", err)
+		return
 	}
 }

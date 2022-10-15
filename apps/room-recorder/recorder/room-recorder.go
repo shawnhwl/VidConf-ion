@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	minio "github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/webrtc/v3"
@@ -26,6 +29,14 @@ type PostgresConf struct {
 	User     string `mapstructure:"user"`
 	Password string `mapstructure:"password"`
 	Database string `mapstructure:"database"`
+}
+
+type MinioConf struct {
+	Endpoint        string `mapstructure:"endpoint"`
+	UseSSL          bool   `mapstructure:"useSSL"`
+	AccessKeyID     string `mapstructure:"username"`
+	SecretAccessKey string `mapstructure:"password"`
+	BucketName      string `mapstructure:"bucketName"`
 }
 
 type RecorderConf struct {
@@ -45,6 +56,7 @@ type SignalConf struct {
 type Config struct {
 	Log      LogConf      `mapstructure:"log"`
 	Postgres PostgresConf `mapstructure:"postgres"`
+	Minio    MinioConf    `mapstructure:"minio"`
 	Recorder RecorderConf `mapstructure:"recorder"`
 	Signal   SignalConf   `mapstructure:"signal"`
 }
@@ -110,17 +122,20 @@ type TrackRemote struct {
 
 type OnTrackRecord struct {
 	timeElapsed time.Duration
+	trackId     string
 	trackRemote TrackRemote
+	dbId        string
+	tracks      []TrackRecord
 }
 
 type TrackRecord struct {
-	timeElapsed time.Duration
-	data        []byte
+	TimeElapsed time.Duration
+	Data        []byte
 }
 
 type ChatRecord struct {
-	timeElapsed time.Duration
-	data        map[string]interface{}
+	TimeElapsed time.Duration          `json:"timeElapsed"`
+	Data        map[string]interface{} `json:"data"`
 }
 
 // RoomRecorder represents a room-recorder node
@@ -133,6 +148,8 @@ type RoomRecorder struct {
 	roomService    *sdk.Room
 	roomRTC        *sdk.RTC
 	postgresDB     *sql.DB
+	minioClient    *minio.Client
+	bucketName     string
 	roomid         string
 	chopInterval   time.Duration
 	systemUid      string
@@ -149,7 +166,6 @@ type RoomRecorder struct {
 	chatsSavedId       int
 	chats              []ChatRecord
 	tracksSavedId      map[string]int
-	tracks             map[string][]TrackRecord
 }
 
 func (s *RoomRecorder) getLiveness(c *gin.Context) {
@@ -164,6 +180,31 @@ func (s *RoomRecorder) getReadiness(c *gin.Context) {
 
 func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	timeLive := time.Now().Format(time.RFC3339)
+
+	// Initialize minio client object.
+	log.Infof("--- Connecting to MinIO ---")
+	log.Infof("endpoint := %s", config.Minio.Endpoint)
+	log.Infof("username := %s", config.Minio.AccessKeyID)
+	log.Infof("password := %s", config.Minio.SecretAccessKey)
+	log.Infof("useSSL := %v", config.Minio.UseSSL)
+	minioClient, err := minio.New(config.Minio.Endpoint, &minio.Options{
+		Creds: credentials.NewStaticV4(config.Minio.AccessKeyID,
+			config.Minio.SecretAccessKey, ""),
+		Secure: config.Minio.UseSSL,
+	})
+	if err != nil {
+		log.Panicf("Unable to connect to filestore: %v\n", err)
+	}
+	err = minioClient.MakeBucket(context.Background(),
+		config.Minio.BucketName,
+		minio.MakeBucketOptions{})
+	if err != nil {
+		exists, errBucketExists := minioClient.BucketExists(context.Background(),
+			config.Minio.BucketName)
+		if errBucketExists != nil || !exists {
+			log.Panicf("Unable to create bucket: %v\n", err)
+		}
+	}
 
 	log.Infof("--- Connecting to PostgreSql ---")
 	addrSplit := strings.Split(config.Postgres.Addr, ":")
@@ -379,6 +420,8 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		roomService:    sdk_roomService,
 		roomRTC:        sdk_rtc,
 		postgresDB:     postgresDB,
+		minioClient:    minioClient,
+		bucketName:     config.Minio.BucketName,
 		roomid:         config.Recorder.Roomid,
 		chopInterval:   time.Duration(config.Recorder.ChoppedInSeconds) * time.Second,
 		systemUid:      config.Recorder.SystemUid,
@@ -393,8 +436,10 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		chatsSavedId:       0,
 		chats:              make([]ChatRecord, 0),
 		tracksSavedId:      make(map[string]int),
-		tracks:             make(map[string][]TrackRecord),
 	}
+
+	s.test()
+
 	return s
 }
 
