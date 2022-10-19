@@ -187,17 +187,17 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	room.createdAt = time.Now()
 	room.updatedBy = *patch_room.Requestor
 	room.updatedAt = room.createdAt
-	insertStmt := `insert into "room"(  "id",
-										"name",
-										"status",
-										"startTime",
-										"endTime",
-										"allowedUserId",
-										"earlyEndReason",
-										"createdBy",
-										"createdAt",
-										"updatedBy",
-										"updatedAt")
+	insertStmt := `insert into "` + s.roomMgmtSchema + `"."room"(   "id",
+																	"name",
+																	"status",
+																	"startTime",
+																	"endTime",
+																	"allowedUserId",
+																	"earlyEndReason",
+																	"createdBy",
+																	"createdAt",
+																	"updatedBy",
+																	"updatedAt")
 					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -229,7 +229,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 
 	err = s.patchRoom(&room, patch_room, c)
 	if err != nil {
-		deleteStmt := `delete from "room" where "id"=$1`
+		deleteStmt := `delete from "` + s.roomMgmtSchema + `"."room" where "id"=$1`
 		for retry := 0; retry < DB_RETRY; retry++ {
 			_, err = s.postgresDB.Exec(deleteStmt, room.id)
 			if err == nil {
@@ -256,7 +256,8 @@ func (s *RoomMgmtService) getRooms(c *gin.Context) {
 	var rows *sql.Rows
 	var err error
 	for retry := 0; retry < DB_RETRY; retry++ {
-		rows, err = s.postgresDB.Query(`SELECT "id" FROM "room"`)
+		queryStmt := `SELECT "id" FROM "` + s.roomMgmtSchema + `"."room"`
+		rows, err = s.postgresDB.Query(queryStmt)
 		if err == nil {
 			break
 		}
@@ -377,10 +378,11 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		room.earlyEndReason = *delete_room.Reason
 	}
 
-	updateStmt := `update "room" set "updatedBy"=$1,
-									 "updatedAt"=$2,
-									 "endTime"=$3,
-									 "earlyEndReason"=$4 where "id"=$5`
+	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
+					set "updatedBy"=$1,
+						"updatedAt"=$2,
+						"endTime"=$3,
+						"earlyEndReason"=$4 where "id"=$5`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
@@ -480,8 +482,9 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	updateStmt := `update "room" set "updatedBy"=$1,
-									 "updatedAt"=$2 where "id"=$3`
+	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
+					set "updatedBy"=$1,
+						"updatedAt"=$2 where "id"=$3`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
@@ -552,7 +555,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	}
 	if isDeleteAll {
 		room.announcements = make([]Announcement, 0)
-		deleteStmt := `delete from "announcement" where "roomId"=$1`
+		deleteStmt := `delete from "` + s.roomMgmtSchema + `"."announcement" where "roomId"=$1`
 		for retry := 0; retry < DB_RETRY; retry++ {
 			_, err = s.postgresDB.Exec(deleteStmt, room.id)
 			if err == nil {
@@ -589,7 +592,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 				return
 			}
 		}
-		deleteStmt := `delete from "announcement" where "id"=$1`
+		deleteStmt := `delete from "` + s.roomMgmtSchema + `"."announcement" where "id"=$1`
 		for key := range idMap {
 			for retry := 0; retry < DB_RETRY; retry++ {
 				_, err = s.postgresDB.Exec(deleteStmt, key)
@@ -607,8 +610,9 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		room.announcements = deleteSlices(room.announcements, toDeleteId)
 	}
 
-	updateStmt := `update "room" set "updatedBy"=$1,
-									 "updatedAt"=$2 where "id"=$3`
+	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
+					set "updatedBy"=$1,
+						"updatedAt"=$2 where "id"=$3`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
@@ -727,12 +731,13 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 		room.allowedUserId = append(room.allowedUserId, patchuser)
 	}
 
-	updateStmt := `update "room" set "updatedBy"=$1,
-									 "updatedAt"=$2,
-									 "name"=$3,
-									 "startTime"=$4,
-									 "endTime"=$5,
-									 "allowedUserId"=$6 where "id"=$7`
+	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
+					set "updatedBy"=$1,
+						"updatedAt"=$2,
+						"name"=$3,
+						"startTime"=$4,
+						"endTime"=$5,
+						"allowedUserId"=$6 where "id"=$7`
 	var err error
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
@@ -806,12 +811,13 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 				room.announcements[id].updatedBy = room.updatedBy
 				room.announcements[id].updatedAt = room.updatedAt
 
-				updateStmt := `update "announcement" set "message"=$1,
-														 "relativeFrom"=$2,
-														 "relativeTimeInSeconds"=$3,
-														 "userId"=$4,
-														 "updatedBy"=$5,
-														 "updatedAt"=$6 where "id"=$7`
+				updateStmt := `update "` + s.roomMgmtSchema + `"."announcement"
+								set "message"=$1,
+									"relativeFrom"=$2,
+									"relativeTimeInSeconds"=$3,
+									"userId"=$4,
+									"updatedBy"=$5,
+									"updatedAt"=$6 where "id"=$7`
 				for retry := 0; retry < DB_RETRY; retry++ {
 					_, err = s.postgresDB.Exec(updateStmt,
 						room.announcements[id].message,
@@ -873,17 +879,17 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 		announcement.updatedAt = room.updatedAt
 		room.announcements = append(room.announcements, announcement)
 
-		insertStmt := `insert into "announcement"(  "id", 
-													"roomId",
-													"status",
-													"message",
-													"relativeFrom",
-													"relativeTimeInSeconds",
-													"userId",
-													"createdBy",
-													"createdAt",
-													"updatedBy",
-													"updatedAt" )
+		insertStmt := `insert into "` + s.roomMgmtSchema + `"."announcement"(   "id", 
+																				"roomId",
+																				"status",
+																				"message",
+																				"relativeFrom",
+																				"relativeTimeInSeconds",
+																				"userId",
+																				"createdBy",
+																				"createdAt",
+																				"updatedBy",
+																				"updatedAt" )
 						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		var err error
 		for retry := 0; retry < DB_RETRY; retry++ {
@@ -918,17 +924,17 @@ func (s *RoomMgmtService) patchRoom(room *Room, patch_room Patch_Room, c *gin.Co
 }
 
 func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (Get_Room, error) {
-	queryStmt := `SELECT "id",
-						 "name",
-						 "status",
-						 "startTime",
-						 "endTime",
-						 "allowedUserId",
-						 "earlyEndReason",
-						 "createdBy",
-						 "createdAt",
-						 "updatedBy",
-						 "updatedAt" FROM "room" WHERE "id"=$1`
+	queryStmt := `SELECT    "id",
+							"name",
+							"status",
+							"startTime",
+							"endTime",
+							"allowedUserId",
+							"earlyEndReason",
+							"createdBy",
+							"createdAt",
+							"updatedBy",
+							"updatedAt" FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 	var rooms *sql.Row
 	for retry := 0; retry < DB_RETRY; retry++ {
 		rooms = s.postgresDB.QueryRow(queryStmt, roomId)
@@ -974,7 +980,7 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (Get_Room,
 						"createdBy",
 						"createdAt",
 						"updatedBy",
-						"updatedAt"	FROM "announcement" WHERE "roomId"=$1`
+						"updatedAt"	FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "roomId"=$1`
 	var announcements *sql.Rows
 	for retry := 0; retry < DB_RETRY; retry++ {
 		announcements, err = s.postgresDB.Query(queryStmt, roomId)
@@ -1016,17 +1022,17 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (Get_Room,
 }
 
 func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
-	queryStmt := `SELECT "id",
-						 "name",
-						 "status",
-						 "startTime",
-						 "endTime",
-						 "allowedUserId",
-						 "earlyEndReason",
-						 "createdBy",
-						 "createdAt",
-						 "updatedBy",
-						 "updatedAt" FROM "room" WHERE "id"=$1`
+	queryStmt := `SELECT    "id",
+							"name",
+							"status",
+							"startTime",
+							"endTime",
+							"allowedUserId",
+							"earlyEndReason",
+							"createdBy",
+							"createdAt",
+							"updatedBy",
+							"updatedAt" FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 	var rooms *sql.Row
 	for retry := 0; retry < DB_RETRY; retry++ {
 		rooms = s.postgresDB.QueryRow(queryStmt, roomId)
@@ -1065,7 +1071,7 @@ func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
 						"createdBy",
 						"createdAt",
 						"updatedBy",
-						"updatedAt"	FROM "announcement" WHERE "roomId"=$1`
+						"updatedAt"	FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "roomId"=$1`
 	var announcements *sql.Rows
 	for retry := 0; retry < DB_RETRY; retry++ {
 		announcements, err = s.postgresDB.Query(queryStmt, roomId)
@@ -1162,12 +1168,13 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 					return errors.New(errorString)
 				}
 				room.announcements[id] = announcement
-				updateStmt := `update "announcement" set "message"=$1,
-														 "relativeFrom"=$2,
-														 "relativeTimeInSeconds"=$3,
-														 "userId"=$4,
-														 "updatedBy"=$5,
-														 "updatedAt"=$6 where "id"=$7`
+				updateStmt := `update "` + s.roomMgmtSchema + `"."announcement"
+								set "message"=$1,
+									"relativeFrom"=$2,
+									"relativeTimeInSeconds"=$3,
+									"userId"=$4,
+									"updatedBy"=$5,
+									"updatedAt"=$6 where "id"=$7`
 				var err error
 				for retry := 0; retry < DB_RETRY; retry++ {
 					_, err = s.postgresDB.Exec(updateStmt,
@@ -1197,17 +1204,17 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patch_room Patch_Room, c *
 		}
 
 		room.announcements = append(room.announcements, announcement)
-		insertStmt := `insert into "announcement"(  "id", 
-													"roomId",
-													"status",
-													"message",
-													"relativeFrom",
-													"relativeTimeInSeconds",
-													"userId",
-													"createdBy",
-													"createdAt",
-													"updatedBy",
-													"updatedAt" )
+		insertStmt := `insert into "` + s.roomMgmtSchema + `"."announcement"(   "id", 
+																				"roomId",
+																				"status",
+																				"message",
+																				"relativeFrom",
+																				"relativeTimeInSeconds",
+																				"userId",
+																				"createdBy",
+																				"createdAt",
+																				"updatedBy",
+																				"updatedAt" )
 						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		var err error
 		for retry := 0; retry < DB_RETRY; retry++ {
@@ -1281,14 +1288,16 @@ type AnnounceKey struct {
 type RoomMgmtService struct {
 	conf Config
 
-	timeLive       string
-	timeReady      string
-	roomService    *sdk.Room
-	postgresDB     *sql.DB
-	onChanges      chan string
-	pollInterval   time.Duration
-	systemUid      string
-	systemUsername string
+	timeLive         string
+	timeReady        string
+	roomService      *sdk.Room
+	postgresDB       *sql.DB
+	roomMgmtSchema   string
+	roomRecordSchema string
+	onChanges        chan string
+	pollInterval     time.Duration
+	systemUid        string
+	systemUsername   string
 
 	roomStarts       map[string]StartRooms
 	roomStartKeys    []string
@@ -1313,8 +1322,8 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		config.Postgres.User,
 		config.Postgres.Password,
 		config.Postgres.Database)
-	log.Infof("psqlconn: %s", psqlconn)
 	var postgresDB *sql.DB
+	// postgresDB.Open
 	for retry := 0; retry < DB_RETRY; retry++ {
 		postgresDB, err = sql.Open("postgres", psqlconn)
 		if err == nil {
@@ -1324,6 +1333,7 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	if err != nil {
 		log.Panicf("Unable to connect to database: %v\n", err)
 	}
+	// postgresDB.Ping
 	for retry := 0; retry < DB_RETRY; retry++ {
 		err = postgresDB.Ping()
 		if err == nil {
@@ -1333,18 +1343,8 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	if err != nil {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
-	createStmt := `CREATE TABLE IF NOT EXISTS
-					"room"( "id"             UUID PRIMARY KEY,
-							"name"           TEXT,
-							"status"         TEXT NOT NULL,
-							"startTime"      TIMESTAMP NOT NULL,
-							"endTime"        TIMESTAMP NOT NULL,
-							"allowedUserId"  TEXT ARRAY,
-							"earlyEndReason" TEXT,
-							"createdBy"      TEXT NOT NULL,
-							"createdAt"      TIMESTAMP NOT NULL,
-							"updatedBy"      TEXT NOT NULL,
-							"updatedAt"      TIMESTAMP NOT NULL)`
+	// create schema
+	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -1354,19 +1354,42 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"announcement"( "id"                    UUID PRIMARY KEY,
-									"roomId"                UUID NOT NULL,
-									"status"                TEXT NOT NULL,
-									"message"               TEXT NOT NULL,
-									"relativeFrom"          TEXT NOT NULL,
-									"relativeTimeInSeconds" INT NOT NULL,
-									"userId"                TEXT ARRAY,
-									"createdAt"             TIMESTAMP NOT NULL,
-									"createdBy"             TEXT NOT NULL,
-									"updatedAt"             TIMESTAMP NOT NULL,
-									"updatedBy"             TEXT NOT NULL,
-									CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`
+	// create table "room"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."room"(
+					"id"             UUID PRIMARY KEY,
+					"name"           TEXT,
+					"status"         TEXT NOT NULL,
+					"startTime"      TIMESTAMP NOT NULL,
+					"endTime"        TIMESTAMP NOT NULL,
+					"allowedUserId"  TEXT ARRAY,
+					"earlyEndReason" TEXT,
+					"createdBy"      TEXT NOT NULL,
+					"createdAt"      TIMESTAMP NOT NULL,
+					"updatedBy"      TEXT NOT NULL,
+					"updatedAt"      TIMESTAMP NOT NULL)`
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Panicf("Unable to execute sql statement: %v\n", err)
+	}
+	// create table "announcement"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."announcement"(
+					"id"                    UUID PRIMARY KEY,
+					"roomId"                UUID NOT NULL,
+					"status"                TEXT NOT NULL,
+					"message"               TEXT NOT NULL,
+					"relativeFrom"          TEXT NOT NULL,
+					"relativeTimeInSeconds" INT NOT NULL,
+					"userId"                TEXT ARRAY,
+					"createdAt"             TIMESTAMP NOT NULL,
+					"createdBy"             TEXT NOT NULL,
+					"updatedAt"             TIMESTAMP NOT NULL,
+					"updatedBy"             TEXT NOT NULL,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -1387,15 +1410,17 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	timeReady := time.Now().Format(time.RFC3339)
 
 	s := &RoomMgmtService{
-		conf:           config,
-		timeLive:       timeLive,
-		timeReady:      timeReady,
-		roomService:    roomService,
-		postgresDB:     postgresDB,
-		onChanges:      make(chan string, 2048),
-		pollInterval:   time.Duration(config.RoomMgmt.PollInSeconds) * time.Second,
-		systemUid:      config.RoomMgmt.SystemUid,
-		systemUsername: config.RoomMgmt.SystemUsername,
+		conf:             config,
+		timeLive:         timeLive,
+		timeReady:        timeReady,
+		roomService:      roomService,
+		postgresDB:       postgresDB,
+		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
+		roomRecordSchema: config.Postgres.RoomRecordSchema,
+		onChanges:        make(chan string, 2048),
+		pollInterval:     time.Duration(config.RoomMgmt.PollInSeconds) * time.Second,
+		systemUid:        config.RoomMgmt.SystemUid,
+		systemUsername:   config.RoomMgmt.SystemUsername,
 	}
 	go s.RoomMgmtSentinel()
 	<-s.onChanges

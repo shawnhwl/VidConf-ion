@@ -19,6 +19,7 @@ addr = "postgres:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
+roomMgmtSchema = "room-mgmt"
 
 [roommgmt]
 # UserId used by system to join the room sessions

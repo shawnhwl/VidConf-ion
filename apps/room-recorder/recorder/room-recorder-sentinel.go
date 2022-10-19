@@ -32,7 +32,7 @@ func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPRe
 			track.SSRC(),
 			track.Codec(),
 			track.RID()},
-		uuid.NewString(),
+		"",
 		make([]TrackRecord, 0)}
 	s.onTracks = append(s.onTracks, onTrackRecord)
 	// Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
@@ -350,6 +350,7 @@ func (s *RoomRecorder) insertOnTracks(id int) {
 											"timeElapsed",
 											"trackRemote")
 					values($1, $2, $3, $4)`
+	s.onTracks[id].dbId = uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			s.onTracks[id].dbId,
@@ -375,18 +376,20 @@ func (s *RoomRecorder) insertChats(startId, endId int) {
 											"timeElapsed",
 											"filepath")
 					values($1, $2, $3, $4)`
-	filename := uuid.NewString()
+	objName := uuid.NewString()
+	filepath := s.folderName + objName
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
-			filename,
+			objName,
 			s.roomRecordId,
 			s.chats[startId].TimeElapsed,
-			filename)
+			s.bucketName+filepath)
 		if err == nil {
 			break
 		}
 		if strings.Contains(err.Error(), DUP_PK) {
-			filename = uuid.NewString()
+			objName = uuid.NewString()
+			filepath = s.folderName + objName
 		}
 	}
 	if err != nil {
@@ -400,7 +403,7 @@ func (s *RoomRecorder) insertChats(startId, endId int) {
 	}
 	uploadInfo, err := s.minioClient.PutObject(context.Background(),
 		s.bucketName,
-		filename,
+		filepath,
 		data,
 		int64(data.Len()),
 		minio.PutObjectOptions{ContentType: "application/octet-stream"})
@@ -408,6 +411,8 @@ func (s *RoomRecorder) insertChats(startId, endId int) {
 		log.Panicf("could not upload file: %s", err)
 	}
 	log.Infof("successfully uploaded bytes: ", uploadInfo)
+
+	s.testDownload(filepath, "chat"+objName+".json")
 }
 
 func (s *RoomRecorder) insertTracks(key string, startId, endId int) {
@@ -427,18 +432,26 @@ func (s *RoomRecorder) insertTracks(key string, startId, endId int) {
 												"timeElapsed",
 												"filepath")
 					values($1, $2, $3, $4)`
-	filename := uuid.NewString()
+	objName := uuid.NewString()
+	filepath := s.folderName + objName
+	for {
+		if s.onTracks[trackId].dbId != "" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
-			filename,
+			objName,
 			s.onTracks[trackId].dbId,
 			s.onTracks[trackId].tracks[startId].TimeElapsed,
-			filename)
+			s.bucketName+filepath)
 		if err == nil {
 			break
 		}
 		if strings.Contains(err.Error(), DUP_PK) {
-			filename = uuid.NewString()
+			objName = uuid.NewString()
+			filepath = s.folderName + objName
 		}
 	}
 	if err != nil {
@@ -452,7 +465,7 @@ func (s *RoomRecorder) insertTracks(key string, startId, endId int) {
 	}
 	uploadInfo, err := s.minioClient.PutObject(context.Background(),
 		s.bucketName,
-		filename,
+		filepath,
 		data,
 		int64(data.Len()),
 		minio.PutObjectOptions{ContentType: "application/octet-stream"})
@@ -460,41 +473,55 @@ func (s *RoomRecorder) insertTracks(key string, startId, endId int) {
 		log.Panicf("could not upload file: %s", err)
 	}
 	log.Infof("successfully uploaded bytes: ", uploadInfo)
+
+	s.testDownload(filepath, "track"+objName)
 }
 
-func (s *RoomRecorder) test() {
-	// file, err := os.Open("app-room-recorder.toml")
-	// if err != nil {
-	// 	log.Errorf("error opening file: %s", err)
-	// 	return
-	// }
-	// defer file.Close()
-
-	// fileStat, err := file.Stat()
-	// if err != nil {
-	// 	log.Errorf("error accessing file: %s", err)
-	// 	return
-	// }
-
-	// uploadInfo, err := s.minioClient.PutObject(context.Background(), s.bucketName, "myobject", file, fileStat.Size(), minio.PutObjectOptions{ContentType: "application/octet-stream"})
-	// if err != nil {
-	// 	log.Errorf("error uploading file: %s", err)
-	// 	return
-	// }
-	// log.Infof("successfully uploaded bytes: ", uploadInfo)
-
-	object, err := s.minioClient.GetObject(context.Background(), s.bucketName, "myobject", minio.GetObjectOptions{})
+func (s *RoomRecorder) testDownload(filepath, filename string) {
+	object, err := s.minioClient.GetObject(context.Background(),
+		s.bucketName,
+		filepath,
+		minio.GetObjectOptions{})
 	if err != nil {
 		log.Errorf("error downloading file: %s", err)
 		return
 	}
-	localFile, err := os.Create("local-file.toml")
+	localFile, err := os.Create(filename)
 	if err != nil {
 		log.Errorf("error creating file: %s", err)
 		return
 	}
-	if _, err = io.Copy(localFile, object); err != nil {
+	downloadInfo, err := io.Copy(localFile, object)
+	if err != nil {
 		log.Errorf("error copying file: %s", err)
 		return
 	}
+	log.Infof("Successfully downloaded bytes: %d", downloadInfo)
+}
+
+func (s *RoomRecorder) testUpload(filepath, filename string) {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Errorf("error opening file: %s", err)
+		return
+	}
+	defer file.Close()
+
+	fileStat, err := file.Stat()
+	if err != nil {
+		log.Errorf("error accessing file: %s", err)
+		return
+	}
+
+	uploadInfo, err := s.minioClient.PutObject(context.Background(),
+		s.bucketName,
+		filepath,
+		file,
+		fileStat.Size(),
+		minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		log.Errorf("error uploading file: %s", err)
+		return
+	}
+	log.Infof("Successfully uploaded: %+v", uploadInfo)
 }

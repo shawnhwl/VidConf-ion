@@ -25,18 +25,24 @@ type LogConf struct {
 }
 
 type PostgresConf struct {
-	Addr     string `mapstructure:"addr"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	Database string `mapstructure:"database"`
+	Addr             string `mapstructure:"addr"`
+	User             string `mapstructure:"user"`
+	Password         string `mapstructure:"password"`
+	Database         string `mapstructure:"database"`
+	RoomMgmtSchema   string `mapstructure:"roomMgmtSchema"`
+	RoomRecordSchema string `mapstructure:"roomRecordSchema"`
 }
 
 type MinioConf struct {
-	Endpoint        string `mapstructure:"endpoint"`
-	UseSSL          bool   `mapstructure:"useSSL"`
-	AccessKeyID     string `mapstructure:"username"`
-	SecretAccessKey string `mapstructure:"password"`
-	BucketName      string `mapstructure:"bucketName"`
+	Endpoint             string `mapstructure:"endpoint"`
+	UseSSL               bool   `mapstructure:"useSSL"`
+	AccessKeyID          string `mapstructure:"username"`
+	SecretAccessKey      string `mapstructure:"password"`
+	BucketName           string `mapstructure:"bucketName"`
+	FolderName           string `mapstructure:"folderName"`
+	AttachmentFolderName string `mapstructure:"attachmentFolderName"`
+	VideoFolderName      string `mapstructure:"videoFolderName"`
+	AudioFolderName      string `mapstructure:"audioFolderName"`
 }
 
 type RecorderConf struct {
@@ -143,13 +149,22 @@ type RoomRecorder struct {
 	conf   Config
 	quitCh chan os.Signal
 
-	timeLive       string
-	timeReady      string
-	roomService    *sdk.Room
-	roomRTC        *sdk.RTC
-	postgresDB     *sql.DB
-	minioClient    *minio.Client
-	bucketName     string
+	timeLive    string
+	timeReady   string
+	roomService *sdk.Room
+	roomRTC     *sdk.RTC
+
+	postgresDB       *sql.DB
+	roomMgmtSchema   string
+	roomRecordSchema string
+
+	minioClient          *minio.Client
+	bucketName           string
+	folderName           string
+	attachmentFolderName string
+	videoFolderName      string
+	audioFolderName      string
+
 	roomid         string
 	chopInterval   time.Duration
 	systemUid      string
@@ -181,12 +196,7 @@ func (s *RoomRecorder) getReadiness(c *gin.Context) {
 func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	timeLive := time.Now().Format(time.RFC3339)
 
-	// Initialize minio client object.
 	log.Infof("--- Connecting to MinIO ---")
-	log.Infof("endpoint := %s", config.Minio.Endpoint)
-	log.Infof("username := %s", config.Minio.AccessKeyID)
-	log.Infof("password := %s", config.Minio.SecretAccessKey)
-	log.Infof("useSSL := %v", config.Minio.UseSSL)
 	minioClient, err := minio.New(config.Minio.Endpoint, &minio.Options{
 		Creds: credentials.NewStaticV4(config.Minio.AccessKeyID,
 			config.Minio.SecretAccessKey, ""),
@@ -218,8 +228,8 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		config.Postgres.User,
 		config.Postgres.Password,
 		config.Postgres.Database)
-	log.Infof("psqlconn: %s", psqlconn)
 	var postgresDB *sql.DB
+	// postgresDB.Open
 	for retry := 0; retry < DB_RETRY; retry++ {
 		postgresDB, err = sql.Open("postgres", psqlconn)
 		if err == nil {
@@ -229,6 +239,7 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to connect to database: %v\n", err)
 	}
+	// postgresDB.Ping
 	for retry := 0; retry < DB_RETRY; retry++ {
 		err = postgresDB.Ping()
 		if err == nil {
@@ -238,18 +249,8 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
-	createStmt := `CREATE TABLE IF NOT EXISTS
-					"room"( "id"             UUID PRIMARY KEY,
-							"name"           TEXT,
-							"status"         TEXT NOT NULL,
-							"startTime"      TIMESTAMP NOT NULL,
-							"endTime"        TIMESTAMP NOT NULL,
-							"allowedUserId"  TEXT ARRAY,
-							"earlyEndReason" TEXT,
-							"createdBy"      TEXT NOT NULL,
-							"createdAt"      TIMESTAMP NOT NULL,
-							"updatedBy"      TEXT NOT NULL,
-							"updatedAt"      TIMESTAMP NOT NULL)`
+	// create schema
+	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -259,19 +260,19 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"announcement"( "id"                    UUID PRIMARY KEY,
-									"roomId"                UUID NOT NULL,
-									"status"                TEXT NOT NULL,
-									"message"               TEXT NOT NULL,
-									"relativeFrom"          TEXT NOT NULL,
-									"relativeTimeInSeconds" INT NOT NULL,
-									"userId"                TEXT ARRAY,
-									"createdAt"             TIMESTAMP NOT NULL,
-									"createdBy"             TEXT NOT NULL,
-									"updatedAt"             TIMESTAMP NOT NULL,
-									"updatedBy"             TEXT NOT NULL,
-									CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`
+	// create table "room"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."room"(
+					"id"             UUID PRIMARY KEY,
+					"name"           TEXT,
+					"status"         TEXT NOT NULL,
+					"startTime"      TIMESTAMP NOT NULL,
+					"endTime"        TIMESTAMP NOT NULL,
+					"allowedUserId"  TEXT ARRAY,
+					"earlyEndReason" TEXT,
+					"createdBy"      TEXT NOT NULL,
+					"createdAt"      TIMESTAMP NOT NULL,
+					"updatedBy"      TEXT NOT NULL,
+					"updatedAt"      TIMESTAMP NOT NULL)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -282,12 +283,8 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"roomRecord"(	"id"        UUID PRIMARY KEY,
-									"roomId"    UUID NOT NULL,
-									"startTime" TIMESTAMP NOT NULL,
-									"endTime"   TIMESTAMP NOT NULL,
-									CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "room"("id") ON DELETE CASCADE)`
+	// create schema
+	createStmt = `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -297,14 +294,14 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"peerEvent"("id"           UUID PRIMARY KEY,
-								"roomRecordId" UUID NOT NULL,
-								"timeElapsed"  INTERVAL NOT NULL,
-								"state"        INT NOT NULL,
-								"peerId"       TEXT NOT NULL,
-								"peerName"     TEXT NOT NULL,
-								CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "roomRecord"(id) ON DELETE CASCADE)`
+	// create table "roomRecord"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."roomRecord"(
+					"id"         UUID PRIMARY KEY,
+					"roomId"     UUID NOT NULL,
+					"startTime"  TIMESTAMP NOT NULL,
+					"endTime"    TIMESTAMP NOT NULL,
+					"folderPath" TEXT NOT NULL,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -314,13 +311,15 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"trackEvent"(   "id"           UUID PRIMARY KEY,
-									"roomRecordId" UUID NOT NULL,
-									"timeElapsed"  INTERVAL NOT NULL,
-									"state"        INT NOT NULL,
-									"trackEventId" TEXT NOT NULL,
-									CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "roomRecord"("id") ON DELETE CASCADE)`
+	// create table "peerEvent"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."peerEvent"(
+					"id"           UUID PRIMARY KEY,
+					"roomRecordId" UUID NOT NULL,
+					"timeElapsed"  INTERVAL NOT NULL,
+					"state"        INT NOT NULL,
+					"peerId"       TEXT NOT NULL,
+					"peerName"     TEXT NOT NULL,
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"(id) ON DELETE CASCADE)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -330,22 +329,14 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"trackInfo"("id"           UUID PRIMARY KEY,
-								"trackEventId" UUID NOT NULL,
-								"trackId"      TEXT NOT NULL,
-								"kind"         TEXT NOT NULL,
-								"muted"        BOOL NOT NULL,
-								"type"         INT NOT NULL,
-								"streamId"     TEXT NOT NULL,
-								"label"        TEXT NOT NULL,
-								"subscribe"    BOOL NOT NULL,
-								"layer"        TEXT NOT NULL,
-								"direction"    TEXT NOT NULL,
-								"width"        INT NOT NULL,
-								"height"       INT NOT NULL,
-								"frameRate"    INT NOT NULL,
-								CONSTRAINT fk_trackEvent FOREIGN KEY("trackEventId") REFERENCES "trackEvent"("id") ON DELETE CASCADE)`
+	// create table "trackEvent"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackEvent"(
+					"id"           UUID PRIMARY KEY,
+					"roomRecordId" UUID NOT NULL,
+					"timeElapsed"  INTERVAL NOT NULL,
+					"state"        INT NOT NULL,
+					"trackEventId" TEXT NOT NULL,
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -355,12 +346,23 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"onTrack"(  "id" UUID PRIMARY KEY,
-								"roomRecordId" UUID NOT NULL,
-								"timeElapsed" INTERVAL NOT NULL,
-								"trackRemote" JSON NOT NULL,
-								CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "roomRecord"("id") ON DELETE CASCADE)`
+	// create table "trackInfo"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackInfo"(
+					"id"           UUID PRIMARY KEY,
+					"trackEventId" UUID NOT NULL,
+					"trackId"      TEXT NOT NULL,
+					"kind"         TEXT NOT NULL,
+					"muted"        BOOL NOT NULL,
+					"type"         INT NOT NULL,
+					"streamId"     TEXT NOT NULL,
+					"label"        TEXT NOT NULL,
+					"subscribe"    BOOL NOT NULL,
+					"layer"        TEXT NOT NULL,
+					"direction"    TEXT NOT NULL,
+					"width"        INT NOT NULL,
+					"height"       INT NOT NULL,
+					"frameRate"    INT NOT NULL,
+					CONSTRAINT fk_trackEvent FOREIGN KEY("trackEventId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."trackEvent"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -370,12 +372,13 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"trackStream"(  "id" UUID PRIMARY KEY,
-									"onTrackId" UUID NOT NULL,
-									"timeElapsed" INTERVAL NOT NULL,
-									"filepath" TEXT NOT NULL,
-									CONSTRAINT fk_onTrack FOREIGN KEY("onTrackId") REFERENCES "onTrack"("id") ON DELETE CASCADE)`
+	// create table "onTrack"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."onTrack"(
+					"id"           UUID PRIMARY KEY,
+					"roomRecordId" UUID NOT NULL,
+					"timeElapsed"  INTERVAL NOT NULL,
+					"trackRemote"  JSON NOT NULL,
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -385,12 +388,53 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"chatStream"(   "id" UUID PRIMARY KEY,
-									"roomRecordId" UUID NOT NULL,
-									"timeElapsed" INTERVAL NOT NULL,
-									"filepath" TEXT NOT NULL,
-									CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "roomRecord"("id") ON DELETE CASCADE)`
+	// create table "trackStream"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackStream"(
+					"id"          UUID PRIMARY KEY,
+					"onTrackId"   UUID NOT NULL,
+					"timeElapsed" INTERVAL NOT NULL,
+					"filePath"    TEXT NOT NULL,
+					CONSTRAINT fk_onTrack FOREIGN KEY("onTrackId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."onTrack"("id") ON DELETE CASCADE)`
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Panicf("Unable to execute sql statement: %v\n", err)
+	}
+	// create table "chatMessage"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
+					"id"           UUID PRIMARY KEY,
+					"roomRecordId" UUID NOT NULL,
+					"timeElapsed"  INTERVAL NOT NULL,
+					"userId"       TEXT NOT NULL,
+					"userName"     TEXT NOT NULL,
+					"text"         TEXT NOT NULL,
+					"timestamp"    TIMESTAMP NOT NULL,
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
+	for retry := 0; retry < DB_RETRY; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Panicf("Unable to execute sql statement: %v\n", err)
+	}
+	// create table "chatAttachment"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
+					"id"           UUID PRIMARY KEY,
+					"roomRecordId" UUID NOT NULL,
+					"timeElapsed"  INTERVAL NOT NULL,
+					"userId"       TEXT NOT NULL,
+					"userName"     TEXT NOT NULL,
+					"fileName"     TEXT NOT NULL,
+					"fileSize"     INT NOT NULL,
+					"filePath"     TEXT NOT NULL,
+					"timestamp"    TIMESTAMP NOT NULL,
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -412,16 +456,65 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("rtc connector fail: %s", err)
 	}
-
+	folderName := config.Minio.FolderName
+	if folderName == "" {
+		folderName = "/"
+	} else {
+		if folderName[0] != '/' {
+			folderName = "/" + folderName
+		}
+	}
+	attachmentFolderName := config.Minio.AttachmentFolderName
+	if attachmentFolderName == "" {
+		attachmentFolderName = "/"
+	} else {
+		if attachmentFolderName[0] != '/' {
+			attachmentFolderName = "/" + attachmentFolderName
+		}
+		if attachmentFolderName[len(attachmentFolderName)-1] != '/' {
+			attachmentFolderName += "/"
+		}
+	}
+	videoFolderName := config.Minio.VideoFolderName
+	if videoFolderName == "" {
+		videoFolderName = "/"
+	} else {
+		if videoFolderName[0] != '/' {
+			videoFolderName = "/" + videoFolderName
+		}
+		if videoFolderName[len(videoFolderName)-1] != '/' {
+			videoFolderName += "/"
+		}
+	}
+	audioFolderName := config.Minio.AudioFolderName
+	if audioFolderName == "" {
+		audioFolderName = "/"
+	} else {
+		if audioFolderName[0] != '/' {
+			audioFolderName = "/" + audioFolderName
+		}
+		if audioFolderName[len(audioFolderName)-1] != '/' {
+			audioFolderName += "/"
+		}
+	}
 	s := &RoomRecorder{
-		conf:           config,
-		quitCh:         quitCh,
-		timeLive:       timeLive,
-		roomService:    sdk_roomService,
-		roomRTC:        sdk_rtc,
-		postgresDB:     postgresDB,
-		minioClient:    minioClient,
-		bucketName:     config.Minio.BucketName,
+		conf:        config,
+		quitCh:      quitCh,
+		timeLive:    timeLive,
+		roomService: sdk_roomService,
+		roomRTC:     sdk_rtc,
+
+		postgresDB:       postgresDB,
+		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
+		roomRecordSchema: config.Postgres.RoomRecordSchema,
+
+		minioClient:          minioClient,
+		bucketName:           config.Minio.BucketName,
+		folderName:           folderName,
+		attachmentFolderName: attachmentFolderName,
+		videoFolderName:      videoFolderName,
+		audioFolderName:      audioFolderName,
+
 		roomid:         config.Recorder.Roomid,
 		chopInterval:   time.Duration(config.Recorder.ChoppedInSeconds) * time.Second,
 		systemUid:      config.Recorder.SystemUid,
@@ -438,7 +531,8 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		tracksSavedId:      make(map[string]int),
 	}
 
-	s.test()
+	s.testUpload(s.folderName+"myobject", "main.go")
+	s.testDownload(s.folderName+"myobject", "local.go1")
 
 	return s
 }

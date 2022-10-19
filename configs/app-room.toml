@@ -19,6 +19,7 @@ addr = "localhost:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
+roomMgmtSchema = "room-mgmt"
 
 [roommgmt]
 # UserId and UserName used by system to join the room sessions

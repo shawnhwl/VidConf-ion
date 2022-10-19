@@ -35,10 +35,11 @@ type natsConf struct {
 }
 
 type PostgresConf struct {
-	Addr     string `mapstructure:"addr"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	Database string `mapstructure:"database"`
+	Addr           string `mapstructure:"addr"`
+	User           string `mapstructure:"user"`
+	Password       string `mapstructure:"password"`
+	Database       string `mapstructure:"database"`
+	RoomMgmtSchema string `mapstructure:"roomMgmtSchema"`
 }
 
 type RoomMgmtConf struct {

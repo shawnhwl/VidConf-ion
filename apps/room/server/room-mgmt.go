@@ -24,9 +24,11 @@ type RoomBooking struct {
 }
 
 func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error) {
-	queryStmt := `SELECT "name",
-						 "status",
-						 "allowedUserId" FROM "room" WHERE "id"=$1`
+	queryStmt := `SELECT    "name",
+							"status",
+							"allowedUserId"
+					FROM "` + s.rs.roomMgmtSchema + `"."room" WHERE "id"=$1`
+
 	var rooms *sql.Row
 	for retry := 0; retry < DB_RETRY; retry++ {
 		rooms = s.rs.postgresDB.QueryRow(queryStmt, roomId)

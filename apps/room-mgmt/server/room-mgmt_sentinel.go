@@ -171,7 +171,7 @@ func (s *RoomMgmtService) initTimings() {
 	s.announcements = make(map[AnnounceKey]Announcements)
 	s.announcementKeys = make([]AnnounceKey, 0)
 
-	queryStmt := `SELECT "id" FROM "room" WHERE "status"<>$1`
+	queryStmt := `SELECT "id" FROM "` + s.roomMgmtSchema + `"."room" WHERE "status"<>$1`
 	var rows *sql.Rows
 	var err error
 	for retry := 0; retry < DB_RETRY; retry++ {
@@ -330,7 +330,7 @@ func (s *RoomMgmtService) sortTimes() {
 }
 
 func (s *RoomMgmtService) startRoomStatus(roomId string) {
-	updateStmt := `update "room" set "status"=$1 where "id"=$2`
+	updateStmt := `update "` + s.roomMgmtSchema + `"."room" set "status"=$1 where "id"=$2`
 	var err error
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
@@ -346,7 +346,7 @@ func (s *RoomMgmtService) startRoomStatus(roomId string) {
 }
 
 func (s *RoomMgmtService) endRoomStatus(roomId string) {
-	updateStmt := `update "room" set "status"=$1 where "id"=$2`
+	updateStmt := `update "` + s.roomMgmtSchema + `"."room" set "status"=$1 where "id"=$2`
 	var err error
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
@@ -362,7 +362,7 @@ func (s *RoomMgmtService) endRoomStatus(roomId string) {
 }
 
 func (s *RoomMgmtService) sendAnnouncementStatus(announceId string) {
-	updateStmt := `update "announcement" set "status"=$1 where "id"=$2`
+	updateStmt := `update "` + s.roomMgmtSchema + `"."announcement" set "status"=$1 where "id"=$2`
 	var err error
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
