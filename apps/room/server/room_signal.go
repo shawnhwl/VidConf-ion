@@ -247,6 +247,12 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 		key = util.GetRedisPeerKey(sid, uid)
 		res = s.rs.redis.HGetAll(key)
 		if len(res) != 0 {
+			if len(res["uid"]) >= r.lenSystemUid {
+				if res["uid"][:r.lenSystemUid] == r.systemUid {
+					continue
+				}
+			}
+
 			info := &room.Peer{
 				Sid:         res["sid"],
 				Uid:         res["uid"],
@@ -259,9 +265,6 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 				Vendor:      res["vendor"],
 			}
 
-			if info.Uid == r.systemUid {
-				continue
-			}
 			err := peer.sendPeerEvent(&room.PeerEvent{
 				State: room.PeerState_JOIN,
 				Peer:  info,

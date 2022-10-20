@@ -29,6 +29,7 @@ type RoomService struct {
 	postgresDB     *sql.DB
 	roomMgmtSchema string
 	systemUid      string
+	lenSystemUid   int
 }
 
 func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *RoomService {
@@ -107,6 +108,7 @@ func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *Room
 		postgresDB:     postgresDB,
 		roomMgmtSchema: conf.RoomMgmtSchema,
 		systemUid:      systemUid,
+		lenSystemUid:   len(systemUid),
 	}
 	go s.stat()
 	return s

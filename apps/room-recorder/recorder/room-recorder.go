@@ -47,8 +47,6 @@ type MinioConf struct {
 
 type RecorderConf struct {
 	Addr             string `mapstructure:"addr"`
-	Cert             string `mapstructure:"cert"`
-	Key              string `mapstructure:"key"`
 	Roomid           string `mapstructure:"roomid"`
 	ChoppedInSeconds int    `mapstructure:"choppedInSeconds"`
 	SystemUid        string `mapstructure:"system_userid"`
@@ -102,14 +100,14 @@ func (c *Config) Load(file string) error {
 	return nil
 }
 
-type PeerEventRecord struct {
+type PeerEvent struct {
 	timeElapsed time.Duration
 	state       sdk.PeerState
 	peerId      string
 	peerName    string
 }
 
-type TrackEventRecord struct {
+type TrackEvent struct {
 	timeElapsed  time.Duration
 	state        sdk.TrackEvent_State
 	trackEventId string
@@ -126,22 +124,20 @@ type TrackRemote struct {
 	Rid         string
 }
 
-type OnTrackRecord struct {
+type Chat struct {
+	timeElapsed time.Duration
+	data        map[string]interface{}
+}
+
+type OnTrack struct {
 	timeElapsed time.Duration
 	trackId     string
 	trackRemote TrackRemote
-	dbId        string
-	tracks      []TrackRecord
 }
 
-type TrackRecord struct {
+type Track struct {
 	TimeElapsed time.Duration
 	Data        []byte
-}
-
-type ChatRecord struct {
-	TimeElapsed time.Duration          `json:"timeElapsed"`
-	Data        map[string]interface{} `json:"data"`
 }
 
 // RoomRecorder represents a room-recorder node
@@ -170,17 +166,8 @@ type RoomRecorder struct {
 	systemUid      string
 	systemUsername string
 
-	roomRecordId       string
-	startTime          time.Time
-	peerEventsSavedId  int
-	peerEvents         []PeerEventRecord
-	trackEventsSavedId int
-	trackEvents        []TrackEventRecord
-	onTracksSavedId    int
-	onTracks           []OnTrackRecord
-	chatsSavedId       int
-	chats              []ChatRecord
-	tracksSavedId      map[string]int
+	roomRecordId string
+	startTime    time.Time
 }
 
 func (s *RoomRecorder) getLiveness(c *gin.Context) {
@@ -519,16 +506,6 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		chopInterval:   time.Duration(config.Recorder.ChoppedInSeconds) * time.Second,
 		systemUid:      config.Recorder.SystemUid,
 		systemUsername: config.Recorder.SystemUsername,
-
-		peerEventsSavedId:  0,
-		peerEvents:         make([]PeerEventRecord, 0),
-		trackEventsSavedId: 0,
-		trackEvents:        make([]TrackEventRecord, 0),
-		onTracksSavedId:    0,
-		onTracks:           make([]OnTrackRecord, 0),
-		chatsSavedId:       0,
-		chats:              make([]ChatRecord, 0),
-		tracksSavedId:      make(map[string]int),
 	}
 
 	s.testUpload(s.folderName+"myobject", "main.go")
@@ -548,7 +525,8 @@ func (s *RoomRecorder) Start() {
 	}
 	log.Infof("--- Joining Room ---")
 	s.joinRoom()
-	go s.RecorderSentinel()
+	log.Infof("RoomRecorder Started")
+	defer log.Infof("RoomRecorder Ended")
 
 	s.timeReady = time.Now().Format(time.RFC3339)
 	log.Infof("--- Starting monitoring-API Server ---")
@@ -557,11 +535,6 @@ func (s *RoomRecorder) Start() {
 	router.Use(gin.Recovery())
 	router.GET("/liveness", s.getLiveness)
 	router.GET("/readiness", s.getReadiness)
-	if s.conf.Recorder.Cert != "" && s.conf.Recorder.Key != "" {
-		log.Infof("HTTP service starting at %s", s.conf.Recorder.Addr)
-		log.Panicf("%s", router.RunTLS(s.conf.Recorder.Addr, s.conf.Recorder.Cert, s.conf.Recorder.Key))
-	} else {
-		log.Infof("HTTP service starting at %s", s.conf.Recorder.Addr)
-		log.Panicf("%s", router.Run(s.conf.Recorder.Addr))
-	}
+	log.Infof("HTTP service starting at %s", s.conf.Recorder.Addr)
+	log.Panicf("%s", router.Run(s.conf.Recorder.Addr))
 }

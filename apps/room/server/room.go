@@ -96,12 +96,13 @@ func (c *Config) Load(file string) error {
 // Room represents a Room which manage peers
 type Room struct {
 	sync.RWMutex
-	sid       string
-	peers     map[string]*Peer
-	info      *room.Room
-	update    time.Time
-	redis     *db.Redis
-	systemUid string
+	sid          string
+	peers        map[string]*Peer
+	info         *room.Room
+	update       time.Time
+	redis        *db.Redis
+	systemUid    string
+	lenSystemUid int
 }
 
 type RoomServer struct {
@@ -237,11 +238,12 @@ func (s *RoomServer) Close() {
 // newRoom creates a new room instance
 func newRoom(sid, systemUid string, redis *db.Redis) *Room {
 	r := &Room{
-		sid:       sid,
-		peers:     make(map[string]*Peer),
-		update:    time.Now(),
-		redis:     redis,
-		systemUid: systemUid,
+		sid:          sid,
+		peers:        make(map[string]*Peer),
+		update:       time.Now(),
+		redis:        redis,
+		systemUid:    systemUid,
+		lenSystemUid: len(systemUid),
 	}
 	return r
 }
@@ -292,9 +294,6 @@ func (r *Room) getPeers() []*Peer {
 	defer r.RUnlock()
 	p := make([]*Peer, 0, len(r.peers))
 	for _, peer := range r.peers {
-		if peer.UID() == r.systemUid {
-			continue
-		}
 		p = append(p, peer)
 	}
 	return p
@@ -339,11 +338,11 @@ func (r *Room) count() int {
 }
 
 func (r *Room) broadcastRoomEvent(uid string, event *room.Reply) {
-	log.Infof("event=%+v", event)
+	log.Infof("broadcastRoomEvent=%+v", event)
 	peers := r.getPeers()
 	r.update = time.Now()
 	for _, p := range peers {
-		if p.UID() != r.systemUid && p.UID() == uid {
+		if p.UID() == uid {
 			continue
 		}
 
@@ -354,11 +353,16 @@ func (r *Room) broadcastRoomEvent(uid string, event *room.Reply) {
 }
 
 func (r *Room) broadcastPeerEvent(event *room.PeerEvent) {
-	log.Infof("event=%+v", event)
+	if len(event.Peer.Uid) >= r.lenSystemUid {
+		if event.Peer.Uid[:r.lenSystemUid] == r.systemUid {
+			return
+		}
+	}
+	log.Infof("broadcastPeerEvent=%+v", event)
 	peers := r.getPeers()
 	r.update = time.Now()
 	for _, p := range peers {
-		if event.Peer.Uid == r.systemUid || p.info.Uid == event.Peer.Uid {
+		if p.info.Uid == event.Peer.Uid {
 			continue
 		}
 		if err := p.sendPeerEvent(event); err != nil {
@@ -404,7 +408,13 @@ func (r *Room) sendMessage(msg *room.Message) {
 	}
 
 	for _, p := range peers {
-		if to == p.info.Uid || r.systemUid == p.info.Uid {
+		isRecipient := to == p.info.Uid
+		if len(p.info.Uid) >= r.lenSystemUid {
+			if p.info.Uid[:r.lenSystemUid] == r.systemUid {
+				isRecipient = true
+			}
+		}
+		if isRecipient {
 			if err := p.sendMessage(msg); err != nil {
 				log.Errorf("send msg to peer(%s) error: %v", p.info.Uid, err)
 			}

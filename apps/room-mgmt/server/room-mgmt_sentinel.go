@@ -32,10 +32,10 @@ func (s *RoomMgmtService) createRoom(roomid, roomname string) error {
 	return nil
 }
 
-func (s *RoomMgmtService) postMessage(roomid, message string, toid []string) error {
-	peerinfo := s.roomService.GetPeers(roomid)
+func (s *RoomMgmtService) postMessage(roomId, message string, toId []string) error {
+	peerinfo := s.roomService.GetPeers(roomId)
 	if len(peerinfo) == 0 {
-		output := fmt.Sprintf("Roomid '%s' is empty", roomid)
+		output := fmt.Sprintf("Roomid '%s' is empty", roomId)
 		log.Errorf(output)
 		return errors.New(output)
 	}
@@ -47,16 +47,16 @@ func (s *RoomMgmtService) postMessage(roomid, message string, toid []string) err
 			"timestamp": time.Now().Format(time.RFC3339),
 		},
 	}
-	if len(toid) == 0 {
-		err := s.roomService.SendMessage(roomid, s.systemUid, "all", payload)
+	if len(toId) == 0 {
+		err := s.roomService.SendMessage(roomId, s.systemUid, "all", payload)
 		if err != nil {
-			output := fmt.Sprintf("Error sending message '%s' to all users in roomid '%s' : %v", message, roomid, err)
+			output := fmt.Sprintf("Error sending message '%s' to all users in roomid '%s' : %v", message, roomId, err)
 			log.Errorf(output)
 			return errors.New(output)
 		}
 	} else {
 		var err error
-		for _, userid := range toid {
+		for _, userid := range toId {
 			hasRecipient := false
 			for _, peer := range peerinfo {
 				if peer.Uid == userid {
@@ -64,23 +64,23 @@ func (s *RoomMgmtService) postMessage(roomid, message string, toid []string) err
 				}
 			}
 			if !hasRecipient {
-				output := fmt.Sprintf("Roomid '%s' missing recipientid '%s'", roomid, userid)
-				log.Errorf(output)
+				output := fmt.Sprintf("Roomid '%s' missing recipientId '%s'", roomId, userid)
+				log.Warnf(output)
 				err = errors.New(output)
 				continue
 			}
-			err1 := s.roomService.SendMessage(roomid, s.systemUid, userid, payload)
+			err1 := s.roomService.SendMessage(roomId, s.systemUid, userid, payload)
 			if err1 != nil {
 				err = err1
 			}
 		}
 		if err != nil {
-			output := fmt.Sprintf("Error sending message '%s' to roomid '%s' : %v", message, roomid, err)
+			output := fmt.Sprintf("Error sending message '%s' to roomid '%s' : %v", message, roomId, err)
 			log.Errorf(output)
 			return errors.New(output)
 		}
 	}
-	log.Infof("Sent message '%s' to users '%v' in roomid '%s'", message, toid, roomid)
+	log.Infof("Sent message '%s' to users '%v' in roomid '%s'", message, toId, roomId)
 	return nil
 }
 
@@ -93,7 +93,6 @@ func (s *RoomMgmtService) endRoom(roomid, roomname, reason string) error {
 	for _, peer := range peerinfo {
 		s.kickUser(roomid, peer.Uid)
 	}
-	s.kickUser(roomid, s.systemUid)
 	if reason == "" {
 		reason = "session ended"
 	}
@@ -113,8 +112,10 @@ func (s *RoomMgmtService) getPeers(roomid string) []User {
 
 	users := make([]User, 0)
 	for _, peer := range peers {
-		if peer.Uid == s.systemUid {
-			continue
+		if len(peer.Uid) >= s.lenSystemUid {
+			if peer.Uid[:s.lenSystemUid] == s.systemUid {
+				continue
+			}
 		}
 		var user User
 		user.UserId = peer.Uid

@@ -1297,6 +1297,7 @@ type RoomMgmtService struct {
 	onChanges        chan string
 	pollInterval     time.Duration
 	systemUid        string
+	lenSystemUid     int
 	systemUsername   string
 
 	roomStarts       map[string]StartRooms
@@ -1420,6 +1421,7 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		onChanges:        make(chan string, 2048),
 		pollInterval:     time.Duration(config.RoomMgmt.PollInSeconds) * time.Second,
 		systemUid:        config.RoomMgmt.SystemUid,
+		lenSystemUid:     len(config.RoomMgmt.SystemUid),
 		systemUsername:   config.RoomMgmt.SystemUsername,
 	}
 	go s.RoomMgmtSentinel()

@@ -63,9 +63,14 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error)
 	}
 
 	isAllowed := false
-	if uId == s.rs.systemUid || len(booking.allowedUserId) == 0 {
+	if len(booking.allowedUserId) == 0 {
 		isAllowed = true
-	} else {
+	} else if len(uId) >= s.rs.lenSystemUid {
+		if uId[:s.rs.lenSystemUid] == s.rs.systemUid {
+			isAllowed = true
+		}
+	}
+	if !isAllowed {
 		for _, allowedUserId := range booking.allowedUserId {
 			if allowedUserId == uId {
 				isAllowed = true
