@@ -39,5 +39,5 @@ func main() {
 	// Press Ctrl+C to exit the process
 	signal.Notify(quitCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	<-quitCh
-	roomRecorder.FinalizeRoomRecord()
+	roomRecorder.UpdateRoomRecord()
 }

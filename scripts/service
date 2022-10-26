@@ -16,7 +16,7 @@ SERVICE=$2
 show_help()
 {
     echo ""
-    echo "Usage: ./service {start|stop|status} {app-room|signal|islb|sfu}"
+    echo "Usage: ./service {start|stop|status} {app-room-sentry|app-room-mgmt|app-room|signal|islb|sfu}"
     echo ""
 }
 
@@ -49,6 +49,9 @@ function start()
         BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
     fi
     if [[ "$SERVICE" == app-room-mgmt ]]; then
+        BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
+    fi
+    if [[ "$SERVICE" == app-room-sentry ]]; then
         BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
     fi
     cd $BUILD_PATH
@@ -114,7 +117,7 @@ if [[ "$ACTION" != "start" && "$ACTION" != "stop" && "$ACTION" != "status" && "$
     exit 1
 fi
 
-if [[ "$SERVICE" != "app-room-mgmt" && "$SERVICE" != "app-room" && "$SERVICE" != "signal" && "$SERVICE" != "islb" && "$SERVICE" != "sfu" ]]; then
+if [[ "$SERVICE" != "app-room-sentry" && "$SERVICE" != "app-room-mgmt" && "$SERVICE" != "app-room" && "$SERVICE" != "signal" && "$SERVICE" != "islb" && "$SERVICE" != "sfu" ]]; then
     show_help
     exit 1
 fi

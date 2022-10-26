@@ -22,17 +22,21 @@ var (
 
 type RoomService struct {
 	room.UnimplementedRoomServiceServer
-	roomLock       sync.RWMutex
-	rooms          map[string]*Room
-	closed         chan struct{}
-	redis          *db.Redis
-	postgresDB     *sql.DB
-	roomMgmtSchema string
-	systemUid      string
-	lenSystemUid   int
+	roomLock          sync.RWMutex
+	rooms             map[string]*Room
+	closed            chan struct{}
+	redis             *db.Redis
+	postgresDB        *sql.DB
+	roomMgmtSchema    string
+	systemUid         string
+	lenSystemUid      int
+	reservedUsernames []string
 }
 
-func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *RoomService {
+func NewRoomService(systemUid string,
+	reservedUsernames []string,
+	config db.Config,
+	conf PostgresConf) *RoomService {
 	log.Infof("--- Connecting to PostgreSql ---")
 	addrSplit := strings.Split(conf.Addr, ":")
 	port, err := strconv.Atoi(addrSplit[1])
@@ -81,12 +85,12 @@ func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *Room
 	createStmt = `CREATE TABLE IF NOT EXISTS
 					"` + conf.RoomMgmtSchema + `"."room"(
 						"id"             UUID PRIMARY KEY,
-						"name"           TEXT,
+						"name"           TEXT NOT NULL,
 						"status"         TEXT NOT NULL,
 						"startTime"      TIMESTAMP NOT NULL,
 						"endTime"        TIMESTAMP NOT NULL,
-						"allowedUserId"  TEXT ARRAY,
-						"earlyEndReason" TEXT,
+						"allowedUserId"  TEXT ARRAY NOT NULL,
+						"earlyEndReason" TEXT NOT NULL,
 						"createdBy"      TEXT NOT NULL,
 						"createdAt"      TIMESTAMP NOT NULL,
 						"updatedBy"      TEXT NOT NULL,
@@ -101,14 +105,18 @@ func NewRoomService(systemUid string, config db.Config, conf PostgresConf) *Room
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 
+	for id := range reservedUsernames {
+		reservedUsernames[id] = strings.ToUpper(reservedUsernames[id])
+	}
 	s := &RoomService{
-		rooms:          make(map[string]*Room),
-		closed:         make(chan struct{}),
-		redis:          db.NewRedis(config),
-		postgresDB:     postgresDB,
-		roomMgmtSchema: conf.RoomMgmtSchema,
-		systemUid:      systemUid,
-		lenSystemUid:   len(systemUid),
+		rooms:             make(map[string]*Room),
+		closed:            make(chan struct{}),
+		redis:             db.NewRedis(config),
+		postgresDB:        postgresDB,
+		roomMgmtSchema:    conf.RoomMgmtSchema,
+		systemUid:         systemUid,
+		lenSystemUid:      len(systemUid),
+		reservedUsernames: reservedUsernames,
 	}
 	go s.stat()
 	return s

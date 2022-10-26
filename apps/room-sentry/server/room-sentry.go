@@ -37,29 +37,15 @@ type PostgresConf struct {
 	RoomRecordSchema string `mapstructure:"roomRecordSchema"`
 }
 
-type MinioConf struct {
-	Endpoint        string `mapstructure:"endpoint"`
-	UseSSL          bool   `mapstructure:"useSSL"`
-	AccessKeyID     string `mapstructure:"username"`
-	SecretAccessKey string `mapstructure:"password"`
-	BucketName      string `mapstructure:"bucketName"`
-}
-
-type WebAppConf struct {
-	Url string `mapstructure:"url"`
-}
-
 type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
 
 type RoomMgmtSentryConf struct {
-	Url string `mapstructure:"url"`
-}
-
-type RoomMgmtConf struct {
-	Addr      string `mapstructure:"address"`
-	SystemUid string `mapstructure:"system_userid"`
+	PollInSeconds  int    `mapstructure:"pollInSeconds"`
+	Addr           string `mapstructure:"address"`
+	SystemUid      string `mapstructure:"system_userid"`
+	SystemUsername string `mapstructure:"system_username"`
 }
 
 type Config struct {
@@ -67,11 +53,8 @@ type Config struct {
 	Log            LogConf            `mapstructure:"log"`
 	Nats           NatsConf           `mapstructure:"nats"`
 	Postgres       PostgresConf       `mapstructure:"postgres"`
-	Minio          MinioConf          `mapstructure:"minio"`
-	WebApp         WebAppConf         `mapstructure:"webapp"`
 	Signal         SignalConf         `mapstructure:"signal"`
 	RoomMgmtSentry RoomMgmtSentryConf `mapstructure:"roomsentry"`
-	RoomMgmt       RoomMgmtConf       `mapstructure:"roommgmt"`
 }
 
 func unmarshal(rawVal interface{}) error {
@@ -109,13 +92,13 @@ func (c *Config) Load(file string) error {
 	return nil
 }
 
-// RoomMgmt represents a room-mgmt node
-type RoomMgmt struct {
+// RoomMgmtSentry represents a room-sentry node
+type RoomMgmtSentry struct {
 	// for standalone running
 	runner.Service
 
-	// HTTP room-mgmt service
-	RoomMgmtService
+	// HTTP room-sentry service
+	RoomMgmtSentryService
 
 	// for distributed node running
 	ion.Node
@@ -126,16 +109,16 @@ type RoomMgmt struct {
 	conf Config
 }
 
-// New create a RoomMgmt node instance
-func New() *RoomMgmt {
-	api := &RoomMgmt{
-		Node: ion.NewNode("room-mgmt-" + util.RandomString(6)),
+// New create a RoomMgmtSentry node instance
+func New() *RoomMgmtSentry {
+	api := &RoomMgmtSentry{
+		Node: ion.NewNode("room-sentry-" + util.RandomString(6)),
 	}
 	return api
 }
 
-// Start RoomMgmt node
-func (r *RoomMgmt) Start(conf Config) error {
+// Start RoomMgmtSentry node
+func (r *RoomMgmtSentry) Start(conf Config) error {
 	var err error
 
 	log.Infof("r.conf.Nats.URL===%+v", r.conf.Nats.URL)
@@ -154,14 +137,14 @@ func (r *RoomMgmt) Start(conf Config) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.Node.NatsConn()
-	r.RoomMgmtService = *NewRoomMgmtService(conf)
+	r.RoomMgmtSentryService = *NewRoomMgmtSentryService(conf)
 
 	// Register reflection service on nats-rpc server.
 	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))
 
 	node := discovery.Node{
 		DC:      conf.Global.Dc,
-		Service: proto.ServiceROOMMGMT,
+		Service: proto.ServiceROOMSENTRY,
 		NID:     r.Node.NID,
 		RPC: discovery.RPC{
 			Protocol: discovery.NGRPC,
@@ -189,6 +172,6 @@ func (r *RoomMgmt) Start(conf Config) error {
 }
 
 // Close all
-func (s *RoomMgmt) Close() {
+func (s *RoomMgmtSentry) Close() {
 	s.Node.Close()
 }

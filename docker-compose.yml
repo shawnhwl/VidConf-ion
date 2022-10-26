@@ -41,7 +41,6 @@ services:
       - 5551:5551
     depends_on:
       - islb
-      - app-room
     networks:
       - ionnet
 
@@ -57,6 +56,25 @@ services:
       - redis
       - postgres
       - islb
+      - signal
+    networks:
+      - ionnet
+
+  app-room-sentry:
+    image: howeli/vidconf-ion_app-room-sentry:latest
+    build:
+      dockerfile: ./docker/app-room-sentry.Dockerfile
+      context: .
+    volumes:
+      - "./configs/docker/app-room-sentry.toml:/configs/app-room-sentry.toml"
+    ports:
+      # Dev port
+      - 7073:7073
+    depends_on:
+      - nats
+      - postgres
+      - signal
+      - app-room
     networks:
       - ionnet
 
@@ -72,11 +90,11 @@ services:
       - 7070:7070
     depends_on:
       - nats
-      - redis
       - postgres
       - islb
-      - app-room
       - signal
+      - app-room
+      - app-room-sentry
     networks:
       - ionnet
 
@@ -93,12 +111,10 @@ services:
       # Dev port
       - 9090:9090
     depends_on:
-      - nats
-      - redis
-      - postgres
-      - islb
-      - app-room
       - signal
+      - app-room
+      - app-room-mgmt
+      - app-room-sentry
     networks:
       - ionnet
     environment:

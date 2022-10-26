@@ -127,7 +127,7 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 
 	sid := pinfo.Sid
 	uid := pinfo.Uid
-	roomname, err := s.getRoomsByRoomid(sid, uid)
+	roomname, err := s.getRoomsByRoomid(sid, uid, pinfo.DisplayName)
 	if err != nil {
 		reply := &room.Reply_Join{
 			Join: &room.JoinReply{

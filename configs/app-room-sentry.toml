@@ -9,11 +9,6 @@ level = "info"
 [nats]
 url = "nats://127.0.0.1:4222"
 
-[redis]
-addrs = [":6379"]
-password = ""
-db = 0
-
 [postgres]
 addr = "localhost:5432"
 user = "vidconfAdmin"
@@ -21,8 +16,16 @@ password = "vidconfPass"
 database = "vidconf"
 roomMgmtSchema = "room-mgmt"
 
-[roommgmt]
+[signal]
+# The addr for grpc signalling
+addr = "localhost:5551"
+
+[roomsentry]
+# Polling interval for StartTime, EndTime and AnnounceTime
+pollInSeconds = 1
+# The address the HTTP server will listen on.
+address = "0.0.0.0:7073"
 # UserId and UserName used by system to join the room sessions
 # Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml" & "app-room-recorder.toml"
 system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
-reserved_usernames = ["Public Announcements", "President", "Boss"]
+system_username = "Public Announcements"

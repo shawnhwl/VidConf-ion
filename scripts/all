@@ -41,6 +41,9 @@ function start()
     echo "------------room-mgmt---------"
     $APP_DIR/scripts/service start app-room-mgmt
 
+    echo "------------room-sentry---------"
+    $APP_DIR/scripts/service start app-room-sentry
+
     # echo "------------avp--------------"
     # $APP_DIR/scripts/service start avp
 
@@ -51,6 +54,9 @@ function stop()
 {
     echo "------------room-mgmt---------"
     $APP_DIR/scripts/service stop app-room-mgmt
+
+    echo "------------room-sentry---------"
+    $APP_DIR/scripts/service stop app-room-sentry
 
     echo "------------room--------------"
     $APP_DIR/scripts/service stop app-room
@@ -98,6 +104,9 @@ function status()
 
     echo "------------room-mgmt---------"
     $APP_DIR/scripts/service status app-room-mgmt
+
+    echo "------------room-sentry---------"
+    $APP_DIR/scripts/service status app-room-sentry
 
     echo "--------------------------"
 }

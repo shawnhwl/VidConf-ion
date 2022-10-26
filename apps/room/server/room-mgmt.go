@@ -23,25 +23,25 @@ type RoomBooking struct {
 	allowedUserId pq.StringArray
 }
 
-func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error) {
+func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (string, error) {
 	queryStmt := `SELECT    "name",
 							"status",
 							"allowedUserId"
 					FROM "` + s.rs.roomMgmtSchema + `"."room" WHERE "id"=$1`
 
-	var rooms *sql.Row
+	var row *sql.Row
 	for retry := 0; retry < DB_RETRY; retry++ {
-		rooms = s.rs.postgresDB.QueryRow(queryStmt, roomId)
-		if rooms.Err() == nil {
+		row = s.rs.postgresDB.QueryRow(queryStmt, roomId)
+		if row.Err() == nil {
 			break
 		}
 	}
-	if rooms.Err() != nil {
-		log.Errorf("could not query database: %s", rooms.Err().Error())
-		return "", rooms.Err()
+	if row.Err() != nil {
+		log.Errorf("could not query database: %s", row.Err().Error())
+		return "", row.Err()
 	}
 	var booking RoomBooking
-	err := rooms.Scan(&booking.name,
+	err := row.Scan(&booking.name,
 		&booking.status,
 		&booking.allowedUserId)
 	if err != nil {
@@ -63,24 +63,32 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId string) (string, error)
 	}
 
 	isAllowed := false
-	if len(booking.allowedUserId) == 0 {
-		isAllowed = true
-	} else if len(uId) >= s.rs.lenSystemUid {
+	if len(uId) >= s.rs.lenSystemUid {
 		if uId[:s.rs.lenSystemUid] == s.rs.systemUid {
 			isAllowed = true
 		}
 	}
 	if !isAllowed {
-		for _, allowedUserId := range booking.allowedUserId {
-			if allowedUserId == uId {
-				isAllowed = true
+		if len(booking.allowedUserId) == 0 {
+			isAllowed = true
+		} else {
+			for _, allowedUserId := range booking.allowedUserId {
+				if allowedUserId == uId {
+					isAllowed = true
+					break
+				}
+			}
+		}
+		for _, reservedName := range s.rs.reservedUsernames {
+			if strings.ToUpper(userName) == reservedName {
+				isAllowed = false
 				break
 			}
 		}
 	}
 	if !isAllowed {
-		log.Warnf(roomBlocked(roomId, uId))
-		return "", errors.New(roomBlocked(roomId, uId))
+		log.Warnf(roomBlocked(roomId, uId, userName))
+		return "", errors.New(roomBlocked(roomId, uId, userName))
 	}
 
 	return booking.name, nil
@@ -98,6 +106,6 @@ func roomEnded(roomId string) string {
 	return "RoomId '" + roomId + "' has ended"
 }
 
-func roomBlocked(roomId, uId string) string {
-	return "UserId '" + uId + "' is denied in RoomId '" + roomId + "'"
+func roomBlocked(roomId, uId, userName string) string {
+	return "UserId '" + uId + "' userName '" + userName + "' is denied in RoomId '" + roomId + "'"
 }

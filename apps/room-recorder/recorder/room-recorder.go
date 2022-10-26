@@ -45,6 +45,10 @@ type MinioConf struct {
 	AudioFolderName      string `mapstructure:"audioFolderName"`
 }
 
+type SignalConf struct {
+	Addr string `mapstructure:"addr"`
+}
+
 type RecorderConf struct {
 	Addr             string `mapstructure:"addr"`
 	Roomid           string `mapstructure:"roomid"`
@@ -53,16 +57,12 @@ type RecorderConf struct {
 	SystemUsername   string `mapstructure:"system_username"`
 }
 
-type SignalConf struct {
-	Addr string `mapstructure:"addr"`
-}
-
 type Config struct {
 	Log      LogConf      `mapstructure:"log"`
 	Postgres PostgresConf `mapstructure:"postgres"`
 	Minio    MinioConf    `mapstructure:"minio"`
-	Recorder RecorderConf `mapstructure:"recorder"`
 	Signal   SignalConf   `mapstructure:"signal"`
+	Recorder RecorderConf `mapstructure:"recorder"`
 }
 
 func unmarshal(rawVal interface{}) error {
@@ -140,7 +140,7 @@ type Track struct {
 	Data        []byte
 }
 
-// RoomRecorder represents a room-recorder node
+// RoomRecorder represents a room-recorder instance
 type RoomRecorder struct {
 	conf   Config
 	quitCh chan os.Signal
@@ -161,7 +161,7 @@ type RoomRecorder struct {
 	videoFolderName      string
 	audioFolderName      string
 
-	roomid         string
+	roomId         string
 	chopInterval   time.Duration
 	systemUid      string
 	systemUsername string
@@ -236,7 +236,7 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	if err != nil {
 		log.Panicf("Unable to ping database: %v\n", err)
 	}
-	// create schema
+	// create RoomMgmtSchema schema
 	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -250,12 +250,12 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	// create table "room"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."room"(
 					"id"             UUID PRIMARY KEY,
-					"name"           TEXT,
+					"name"           TEXT NOT NULL,
 					"status"         TEXT NOT NULL,
 					"startTime"      TIMESTAMP NOT NULL,
 					"endTime"        TIMESTAMP NOT NULL,
-					"allowedUserId"  TEXT ARRAY,
-					"earlyEndReason" TEXT,
+					"allowedUserId"  TEXT ARRAY NOT NULL,
+					"earlyEndReason" TEXT NOT NULL,
 					"createdBy"      TEXT NOT NULL,
 					"createdAt"      TIMESTAMP NOT NULL,
 					"updatedBy"      TEXT NOT NULL,
@@ -270,7 +270,7 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 
-	// create schema
+	// create RoomRecordSchema schema
 	createStmt = `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -288,7 +288,7 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 					"startTime"  TIMESTAMP NOT NULL,
 					"endTime"    TIMESTAMP NOT NULL,
 					"folderPath" TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id") ON DELETE CASCADE)`
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -302,11 +302,13 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."peerEvent"(
 					"id"           UUID PRIMARY KEY,
 					"roomRecordId" UUID NOT NULL,
-					"timeElapsed"  INTERVAL NOT NULL,
+					"roomId"       UUID NOT NULL,
+					"timeElapsed"  BIGINT NOT NULL,
 					"state"        INT NOT NULL,
 					"peerId"       TEXT NOT NULL,
 					"peerName"     TEXT NOT NULL,
-					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"(id) ON DELETE CASCADE)`
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -320,10 +322,12 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackEvent"(
 					"id"           UUID PRIMARY KEY,
 					"roomRecordId" UUID NOT NULL,
-					"timeElapsed"  INTERVAL NOT NULL,
+					"roomId"       UUID NOT NULL,
+					"timeElapsed"  BIGINT NOT NULL,
 					"state"        INT NOT NULL,
 					"trackEventId" TEXT NOT NULL,
-					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -337,6 +341,7 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackInfo"(
 					"id"           UUID PRIMARY KEY,
 					"trackEventId" UUID NOT NULL,
+					"roomId"       UUID NOT NULL,
 					"trackId"      TEXT NOT NULL,
 					"kind"         TEXT NOT NULL,
 					"muted"        BOOL NOT NULL,
@@ -349,7 +354,8 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 					"width"        INT NOT NULL,
 					"height"       INT NOT NULL,
 					"frameRate"    INT NOT NULL,
-					CONSTRAINT fk_trackEvent FOREIGN KEY("trackEventId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."trackEvent"("id") ON DELETE CASCADE)`
+					CONSTRAINT fk_trackEvent FOREIGN KEY("trackEventId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."trackEvent"("id") ON DELETE CASCADE,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -363,9 +369,11 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."onTrack"(
 					"id"           UUID PRIMARY KEY,
 					"roomRecordId" UUID NOT NULL,
-					"timeElapsed"  INTERVAL NOT NULL,
+					"roomId"       UUID NOT NULL,
+					"timeElapsed"  BIGINT NOT NULL,
 					"trackRemote"  JSON NOT NULL,
-					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -379,9 +387,11 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackStream"(
 					"id"          UUID PRIMARY KEY,
 					"onTrackId"   UUID NOT NULL,
-					"timeElapsed" INTERVAL NOT NULL,
+					"roomId"      UUID NOT NULL,
+					"timeElapsed" BIGINT NOT NULL,
 					"filePath"    TEXT NOT NULL,
-					CONSTRAINT fk_onTrack FOREIGN KEY("onTrackId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."onTrack"("id") ON DELETE CASCADE)`
+					CONSTRAINT fk_onTrack FOREIGN KEY("onTrackId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."onTrack"("id") ON DELETE CASCADE,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -395,12 +405,14 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
 					"id"           UUID PRIMARY KEY,
 					"roomRecordId" UUID NOT NULL,
-					"timeElapsed"  INTERVAL NOT NULL,
+					"roomId"       UUID NOT NULL,
+					"timeElapsed"  BIGINT NOT NULL,
 					"userId"       TEXT NOT NULL,
 					"userName"     TEXT NOT NULL,
 					"text"         TEXT NOT NULL,
 					"timestamp"    TIMESTAMP NOT NULL,
-					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -414,14 +426,16 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
 					"id"           UUID PRIMARY KEY,
 					"roomRecordId" UUID NOT NULL,
-					"timeElapsed"  INTERVAL NOT NULL,
+					"roomId"       UUID NOT NULL,
+					"timeElapsed"  BIGINT NOT NULL,
 					"userId"       TEXT NOT NULL,
 					"userName"     TEXT NOT NULL,
 					"fileName"     TEXT NOT NULL,
 					"fileSize"     INT NOT NULL,
 					"filePath"     TEXT NOT NULL,
 					"timestamp"    TIMESTAMP NOT NULL,
-					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE)`
+					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -502,7 +516,7 @@ func NewRoomRecorder(config Config, quitCh chan os.Signal) *RoomRecorder {
 		videoFolderName:      videoFolderName,
 		audioFolderName:      audioFolderName,
 
-		roomid:         config.Recorder.Roomid,
+		roomId:         config.Recorder.Roomid,
 		chopInterval:   time.Duration(config.Recorder.ChoppedInSeconds) * time.Second,
 		systemUid:      config.Recorder.SystemUid,
 		systemUsername: config.Recorder.SystemUsername,
@@ -519,7 +533,7 @@ func (s *RoomRecorder) Start() {
 	defer s.roomService.Close()
 	defer s.roomRTC.Close()
 
-	err := s.getRoomsByRoomid(s.roomid)
+	err := s.getRoomsByRoomid(s.roomId)
 	if err != nil {
 		log.Panicf("Join room fail:%s", err.Error())
 	}

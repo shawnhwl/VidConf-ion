@@ -15,18 +15,14 @@ user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
 roomMgmtSchema = "room-mgmt"
+roomRecordSchema = "room-recorder"
 
-[roommgmt]
-# Polling interval for StartTime, EndTime and AnnounceTime
-pollInSeconds = 1
-
-# The address the HTTP server will listen on.
-address = "0.0.0.0:7070"
-
-# UserId and UserName used by system to join the room sessions
-# Must be identical across "app-room.toml", "app-room-mgmt.toml" & "app-room-recorder.toml"
-system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
-system_username = "Public Announcements"
+[minio]
+endpoint = "play.min.io"
+useSSL = true
+username = "Q3AM3UQ867SPQQA43P2F"
+password = "zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG"
+bucketName = "vidconf"
 
 [webapp]
 # The URL of the webapp
@@ -35,3 +31,15 @@ url = "https://localhost:9090"
 [signal]
 # The addr for grpc signalling
 addr = "localhost:5551"
+
+[roomsentry]
+# The addr for roomsentry
+url = "http://localhost:7073"
+
+[roommgmt]
+# The address the HTTP server will listen on.
+address = "0.0.0.0:7070"
+
+# UserId and UserName used by system to join the room sessions
+# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml" & "app-room-recorder.toml"
+system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"

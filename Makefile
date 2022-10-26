@@ -19,6 +19,7 @@ core:
 app:
 	go build -o bin/app-room $(GO_LDFLAGS) apps/room/main.go
 	go build -o bin/app-room-mgmt $(GO_LDFLAGS) apps/room-mgmt/main.go
+	go build -o bin/app-room-sentry $(GO_LDFLAGS) apps/room-sentry/main.go
 
 clean:
 	rm -rf bin
@@ -31,7 +32,7 @@ scripts-stop-services:
 
 docker-start-services:
 	docker-compose pull
-	docker-compose -f docker-compose.yml up
+	docker-compose -f docker-compose.yml up --force-recreate --remove-orphans
 
 docker-stop-services:
 	docker-compose -f docker-compose.yml down

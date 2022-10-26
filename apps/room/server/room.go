@@ -43,7 +43,8 @@ type PostgresConf struct {
 }
 
 type RoomMgmtConf struct {
-	SystemUid string `mapstructure:"system_userid"`
+	SystemUid         string   `mapstructure:"system_userid"`
+	ReservedUsernames []string `mapstructure:"reserved_usernames"`
 }
 
 // Config for room node
@@ -157,7 +158,10 @@ func (r *RoomServer) StartGRPC(registrar grpc.ServiceRegistrar) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = nil
-	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid, r.conf.Redis, r.conf.Postgres)
+	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid,
+		r.conf.RoomMgmt.ReservedUsernames,
+		r.conf.Redis,
+		r.conf.Postgres)
 	log.Infof("NewRoomService r.conf.Redis=%+v r.redis=%+v", r.conf.Redis, r.redis)
 	log.Infof("NewRoomService r.conf.Postgres=%+v r.postgres=%+v", r.conf.Postgres, r.postgresDB)
 	r.RoomSignalService = *NewRoomSignalService(&r.RoomService)
@@ -188,7 +192,10 @@ func (r *RoomServer) Start() error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.NatsConn()
-	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid, r.conf.Redis, r.conf.Postgres)
+	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid,
+		r.conf.RoomMgmt.ReservedUsernames,
+		r.conf.Redis,
+		r.conf.Postgres)
 	log.Infof("NewRoomService r.conf.Redis=%+v r.redis=%+v", r.conf.Redis, r.redis)
 	log.Infof("NewRoomService r.conf.Postgres=%+v r.postgres=%+v", r.conf.Postgres, r.postgresDB)
 	r.RoomSignalService = *NewRoomSignalService(&r.RoomService)

@@ -1,0 +1,25 @@
+version: "3.7"
+
+services:
+  postgres:
+    image: postgres:14.5-alpine
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: vidconfAdmin
+      POSTGRES_PASSWORD: vidconfPass
+      POSTGRES_DB: vidconf
+    networks:
+      - ionnet
+
+  adminer:
+    image: adminer
+    ports:
+      - 8080:8080
+    networks:
+      - ionnet
+
+networks:
+  ionnet:
+    name: ionnet
+    driver: bridge
