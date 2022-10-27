@@ -2032,7 +2032,7 @@ func (s *RoomMgmtService) joinRoom() {
 	err := s.roomService.Join(
 		sdk.JoinInfo{
 			Sid: s.systemUid,
-			Uid: s.systemUid,
+			Uid: s.systemUid + sdk.RandomKey(16),
 		},
 	)
 	if err != nil {

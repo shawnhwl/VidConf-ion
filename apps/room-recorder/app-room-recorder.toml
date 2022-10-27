@@ -30,9 +30,9 @@ addr = "localhost:5551"
 
 [recorder]
 # The address the monitoring server will listen on.
-addr = "0.0.0.0:7081"
+addr = "0.0.0.0:7082"
 # Roomid to record session
-roomid = "2919874e-911e-41ce-90aa-fcea7a0d2a05"
+roomid = "47c18217-b2f9-4093-9afd-44a0cdf96563"
 # time in seconds per chopped section
 choppedInSeconds = 5
 # UserId and UserName used by system to join the room sessions

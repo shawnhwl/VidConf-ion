@@ -180,7 +180,7 @@ func (s *RoomRecorderService) checkForRoomError() {
 		<-s.joinRoomCh
 		s.closeRoom()
 		for {
-			time.Sleep(time.Second)
+			time.Sleep(5 * time.Second)
 			room, err := s.getRoomsByRoomid(s.roomId)
 			if err != nil {
 				s.quitCh <- os.Interrupt
@@ -251,9 +251,8 @@ func (s *RoomRecorderService) joinRoom() {
 	// join room
 	err := s.roomService.Join(
 		sdk.JoinInfo{
-			Sid:         s.roomId,
-			Uid:         s.systemUid,
-			DisplayName: s.systemUsername,
+			Sid: s.roomId,
+			Uid: s.systemUid + sdk.RandomKey(16),
 		},
 	)
 	if err != nil {
