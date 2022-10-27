@@ -185,6 +185,10 @@ func (s *RoomMgmtService) getLiveness(c *gin.Context) {
 
 func (s *RoomMgmtService) getReadiness(c *gin.Context) {
 	log.Infof("GET /readiness")
+	if s.timeReady == "" {
+		c.String(http.StatusInternalServerError, "Not Ready yet")
+		return
+	}
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
 }
 
@@ -1681,10 +1685,13 @@ func (s *RoomMgmtService) kickUser(roomId, userId string) (error, error) {
 }
 
 type RoomMgmtService struct {
-	conf Config
+	conf       Config
+	joinRoomCh chan bool
 
 	timeLive  string
 	timeReady string
+
+	roomService *sdk.Room
 
 	postgresDB       *sql.DB
 	roomMgmtSchema   string
@@ -1693,16 +1700,12 @@ type RoomMgmtService struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	roomService *sdk.Room
-
 	onChanges    chan string
 	systemUid    string
 	lenSystemUid int
 }
 
-func NewRoomMgmtService(config Config) *RoomMgmtService {
-	timeLive := time.Now().Format(time.RFC3339)
-
+func getMinioClient(config Config) *minio.Client {
 	log.Infof("--- Connecting to MinIO ---")
 	minioClient, err := minio.New(config.Minio.Endpoint, &minio.Options{
 		Creds: credentials.NewStaticV4(config.Minio.AccessKeyID,
@@ -1723,6 +1726,10 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		}
 	}
 
+	return minioClient
+}
+
+func getPostgresDB(config Config) *sql.DB {
 	log.Infof("--- Connecting to PostgreSql ---")
 	addrSplit := strings.Split(config.Postgres.Addr, ":")
 	port, err := strconv.Atoi(addrSplit[1])
@@ -1886,19 +1893,32 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 
+	return postgresDB
+}
+
+func getRoomService(config Config) (*sdk.Room, error) {
 	log.Infof("--- Connecting to Room Signal ---")
 	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
 	sdk_connector := sdk.NewConnector(config.Signal.Addr)
 	if sdk_connector == nil {
-		log.Panicf("connection to %s fail", config.Signal.Addr)
+		log.Errorf("connection to %s fail", config.Signal.Addr)
+		return nil, errors.New("")
 	}
 	roomService := sdk.NewRoom(sdk_connector)
-	timeReady := time.Now().Format(time.RFC3339)
+	return roomService, nil
+}
+
+func NewRoomMgmtService(config Config) *RoomMgmtService {
+	timeLive := time.Now().Format(time.RFC3339)
+	minioClient := getMinioClient(config)
+	postgresDB := getPostgresDB(config)
 
 	s := &RoomMgmtService{
-		conf:      config,
+		conf:       config,
+		joinRoomCh: make(chan bool, 32),
+
 		timeLive:  timeLive,
-		timeReady: timeReady,
+		timeReady: "",
 
 		postgresDB:       postgresDB,
 		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
@@ -1907,18 +1927,22 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		roomService: roomService,
+		roomService: nil,
 
 		onChanges:    make(chan string, 2048),
 		systemUid:    config.RoomMgmt.SystemUid,
 		lenSystemUid: len(config.RoomMgmt.SystemUid),
 	}
-	go s.sentry()
+
 	go s.start()
+	go s.checkForRoomError()
+	go s.checkForDBChanges()
+	s.joinRoomCh <- true
+
 	return s
 }
 
-func (s *RoomMgmtService) sentry() {
+func (s *RoomMgmtService) checkForDBChanges() {
 	for {
 		roomId := <-s.onChanges
 		log.Infof("changes to roomid '%s'", roomId)
@@ -1939,11 +1963,88 @@ func (s *RoomMgmtService) sentry() {
 	}
 }
 
-func (s *RoomMgmtService) start() {
-	defer s.postgresDB.Close()
-	defer s.roomService.Close()
-	defer close(s.onChanges)
+func (s *RoomMgmtService) closeRoom() {
+	if s.roomService != nil {
+		s.roomService.Leave(s.systemUid, s.systemUid)
+		s.roomService.Close()
+		s.roomService = nil
+	}
+}
 
+func (s *RoomMgmtService) checkForRoomError() {
+	for {
+		<-s.joinRoomCh
+		s.closeRoom()
+		for {
+			time.Sleep(time.Second)
+			roomService, err := getRoomService(s.conf)
+			if err == nil {
+				s.roomService = roomService
+				break
+			}
+		}
+		s.joinRoom()
+	}
+}
+
+func (s *RoomMgmtService) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
+	log.Infof("onRoomJoin success = %v, info = %v, err = %v", success, info, err)
+	s.timeReady = time.Now().Format(time.RFC3339)
+}
+
+func (s *RoomMgmtService) onRoomPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
+	log.Infof("onRoomPeerEvent state = %+v, peer = %+v", state, peer)
+}
+
+func (s *RoomMgmtService) onRoomMessage(from string, to string, data map[string]interface{}) {
+	log.Infof("onRoomMessage from = %+v, to = %+v, data = %+v", from, to, data)
+}
+
+func (s *RoomMgmtService) onRoomDisconnect(sid, reason string) {
+	log.Infof("onRoomDisconnect sid = %+v, reason = %+v", sid, reason)
+	s.timeReady = ""
+	if s.roomService != nil {
+		s.joinRoomCh <- true
+	}
+}
+
+func (s *RoomMgmtService) onRoomError(err error) {
+	log.Errorf("onRoomError %v", err)
+	s.timeReady = ""
+	if s.roomService != nil {
+		s.joinRoomCh <- true
+	}
+}
+
+func (s *RoomMgmtService) onRoomLeave(success bool, err error) {
+	log.Infof("onRoomLeave: success %v, onLeave %v", success, err)
+}
+
+func (s *RoomMgmtService) joinRoom() {
+	s.roomService.OnJoin = s.onRoomJoin
+	s.roomService.OnPeerEvent = s.onRoomPeerEvent
+	s.roomService.OnMessage = s.onRoomMessage
+	s.roomService.OnDisconnect = s.onRoomDisconnect
+	s.roomService.OnError = s.onRoomError
+	s.roomService.OnLeave = s.onRoomLeave
+
+	// join room
+	err := s.roomService.Join(
+		sdk.JoinInfo{
+			Sid: s.systemUid,
+			Uid: s.systemUid,
+		},
+	)
+	if err != nil {
+		s.timeReady = ""
+		if s.roomService != nil {
+			s.joinRoomCh <- true
+		}
+		return
+	}
+}
+
+func (s *RoomMgmtService) start() {
 	log.Infof("--- Starting HTTP-API Server ---")
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()

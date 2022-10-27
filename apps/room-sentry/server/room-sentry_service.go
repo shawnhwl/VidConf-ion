@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -46,11 +47,13 @@ type AnnounceKey struct {
 	announceId string
 }
 
-type RoomMgmtSentryService struct {
-	conf Config
+type RoomSentryService struct {
+	conf       Config
+	joinRoomCh chan bool
 
-	timeLive    string
-	timeReady   string
+	timeLive  string
+	timeReady string
+
 	roomService *sdk.Room
 
 	postgresDB     *sql.DB
@@ -69,12 +72,12 @@ type RoomMgmtSentryService struct {
 	announcementKeys []AnnounceKey
 }
 
-func (s *RoomMgmtSentryService) getLiveness(c *gin.Context) {
+func (s *RoomSentryService) getLiveness(c *gin.Context) {
 	log.Infof("GET /liveness")
 	c.String(http.StatusOK, "Live since %s", s.timeLive)
 }
 
-func (s *RoomMgmtSentryService) getReadiness(c *gin.Context) {
+func (s *RoomSentryService) getReadiness(c *gin.Context) {
 	log.Infof("GET /readiness")
 	if s.timeReady == "" {
 		c.String(http.StatusInternalServerError, "Not Ready yet")
@@ -83,7 +86,7 @@ func (s *RoomMgmtSentryService) getReadiness(c *gin.Context) {
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
 }
 
-func (s *RoomMgmtSentryService) getRoomid(c *gin.Context) {
+func (s *RoomSentryService) getRoomid(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET rooms/%s", roomId)
 
@@ -91,9 +94,7 @@ func (s *RoomMgmtSentryService) getRoomid(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func NewRoomMgmtSentryService(config Config) *RoomMgmtSentryService {
-	timeLive := time.Now().Format(time.RFC3339)
-
+func getPostgresDB(config Config) *sql.DB {
 	log.Infof("--- Connecting to PostgreSql ---")
 	addrSplit := strings.Split(config.Postgres.Addr, ":")
 	port, err := strconv.Atoi(addrSplit[1])
@@ -184,20 +185,33 @@ func NewRoomMgmtSentryService(config Config) *RoomMgmtSentryService {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
 
+	return postgresDB
+}
+
+func getRoomService(config Config) (*sdk.Room, error) {
 	log.Infof("--- Connecting to Room Signal ---")
 	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
 	sdk_connector := sdk.NewConnector(config.Signal.Addr)
 	if sdk_connector == nil {
-		log.Panicf("connection to %s fail", config.Signal.Addr)
+		log.Errorf("connection to %s fail", config.Signal.Addr)
+		return nil, errors.New("")
 	}
 	roomService := sdk.NewRoom(sdk_connector)
+	return roomService, nil
+}
 
-	s := &RoomMgmtSentryService{
-		conf: config,
+func NewRoomMgmtSentryService(config Config) *RoomSentryService {
+	timeLive := time.Now().Format(time.RFC3339)
+	postgresDB := getPostgresDB(config)
 
-		timeLive:    timeLive,
-		timeReady:   "",
-		roomService: roomService,
+	s := &RoomSentryService{
+		conf:       config,
+		joinRoomCh: make(chan bool, 32),
+
+		timeLive:  timeLive,
+		timeReady: "",
+
+		roomService: nil,
 
 		postgresDB:     postgresDB,
 		roomMgmtSchema: config.Postgres.RoomMgmtSchema,
@@ -214,17 +228,98 @@ func NewRoomMgmtSentryService(config Config) *RoomMgmtSentryService {
 		announcements:    make(map[AnnounceKey]Announcements),
 		announcementKeys: make([]AnnounceKey, 0),
 	}
+
 	go s.start()
-	go s.sentry()
+	go s.checkForServiceCall()
+	go s.checkForRoomError()
 	<-s.onChanges
+	s.joinRoomCh <- true
+
 	return s
 }
 
-func (s *RoomMgmtSentryService) start() {
-	defer s.postgresDB.Close()
-	defer s.roomService.Close()
-	defer close(s.onChanges)
+func (s *RoomSentryService) closeRoom() {
+	if s.roomService != nil {
+		s.roomService.Leave(s.systemUid, s.systemUid)
+		s.roomService.Close()
+		s.roomService = nil
+	}
+}
 
+func (s *RoomSentryService) checkForRoomError() {
+	for {
+		<-s.joinRoomCh
+		s.closeRoom()
+		for {
+			time.Sleep(time.Second)
+			roomService, err := getRoomService(s.conf)
+			if err == nil {
+				s.roomService = roomService
+				break
+			}
+		}
+		s.joinRoom()
+	}
+}
+
+func (s *RoomSentryService) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
+	log.Infof("onRoomJoin success = %v, info = %v, err = %v", success, info, err)
+	s.timeReady = time.Now().Format(time.RFC3339)
+}
+
+func (s *RoomSentryService) onRoomPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
+	log.Infof("onRoomPeerEvent state = %+v, peer = %+v", state, peer)
+}
+
+func (s *RoomSentryService) onRoomMessage(from string, to string, data map[string]interface{}) {
+	log.Infof("onRoomMessage from = %+v, to = %+v, data = %+v", from, to, data)
+}
+
+func (s *RoomSentryService) onRoomDisconnect(sid, reason string) {
+	log.Infof("onRoomDisconnect sid = %+v, reason = %+v", sid, reason)
+	s.timeReady = ""
+	if s.roomService != nil {
+		s.joinRoomCh <- true
+	}
+}
+
+func (s *RoomSentryService) onRoomError(err error) {
+	log.Errorf("onRoomError %v", err)
+	s.timeReady = ""
+	if s.roomService != nil {
+		s.joinRoomCh <- true
+	}
+}
+
+func (s *RoomSentryService) onRoomLeave(success bool, err error) {
+	log.Infof("onRoomLeave: success %v, onLeave %v", success, err)
+}
+
+func (s *RoomSentryService) joinRoom() {
+	s.roomService.OnJoin = s.onRoomJoin
+	s.roomService.OnPeerEvent = s.onRoomPeerEvent
+	s.roomService.OnMessage = s.onRoomMessage
+	s.roomService.OnDisconnect = s.onRoomDisconnect
+	s.roomService.OnError = s.onRoomError
+	s.roomService.OnLeave = s.onRoomLeave
+
+	// join room
+	err := s.roomService.Join(
+		sdk.JoinInfo{
+			Sid: s.systemUid,
+			Uid: s.systemUid,
+		},
+	)
+	if err != nil {
+		s.timeReady = ""
+		if s.roomService != nil {
+			s.joinRoomCh <- true
+		}
+		return
+	}
+}
+
+func (s *RoomSentryService) start() {
 	log.Infof("--- Starting HTTP-API Server ---")
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()

@@ -50,7 +50,7 @@ type Room struct {
 	updatedAt      time.Time
 }
 
-func (s *RoomMgmtSentryService) createRoom(roomId, roomname string) error {
+func (s *RoomSentryService) createRoom(roomId, roomname string) error {
 	err := s.roomService.CreateRoom(sdk.RoomInfo{Sid: roomId, Name: roomname})
 	if err != nil {
 		output := fmt.Sprintf("Error creating roomId '%s' : %v", roomId, err)
@@ -61,7 +61,7 @@ func (s *RoomMgmtSentryService) createRoom(roomId, roomname string) error {
 	return nil
 }
 
-func (s *RoomMgmtSentryService) postMessage(roomId, message string, toId []string) error {
+func (s *RoomSentryService) postMessage(roomId, message string, toId []string) error {
 	peerinfo := s.roomService.GetPeers(roomId)
 	if len(peerinfo) == 0 {
 		output := fmt.Sprintf("Roomid '%s' is empty", roomId)
@@ -122,7 +122,7 @@ func (s *RoomMgmtSentryService) postMessage(roomId, message string, toId []strin
 	return nil
 }
 
-func (s *RoomMgmtSentryService) endRoom(roomId, roomname, reason string) error {
+func (s *RoomSentryService) endRoom(roomId, roomname, reason string) error {
 	err := s.createRoom(roomId, roomname)
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func (s *RoomMgmtSentryService) endRoom(roomId, roomname, reason string) error {
 	return nil
 }
 
-func (s *RoomMgmtSentryService) kickUser(roomId, userId string) (error, error) {
+func (s *RoomSentryService) kickUser(roomId, userId string) (error, error) {
 	peerinfo := s.roomService.GetPeers(roomId)
 	for _, peer := range peerinfo {
 		if userId == peer.Uid {
@@ -164,10 +164,9 @@ func (s *RoomMgmtSentryService) kickUser(roomId, userId string) (error, error) {
 	return errors.New(output), nil
 }
 
-func (s *RoomMgmtSentryService) sentry() {
+func (s *RoomSentryService) checkForServiceCall() {
 	s.initTimings()
 	s.sortTimes()
-	s.timeReady = time.Now().Format(time.RFC3339)
 	s.onChanges <- "ok"
 
 	log.Infof("RoomMgmtSentryService Started")
@@ -185,7 +184,7 @@ func (s *RoomMgmtSentryService) sentry() {
 	}
 }
 
-func (s *RoomMgmtSentryService) initTimings() {
+func (s *RoomSentryService) initTimings() {
 	queryStmt := `SELECT "id" FROM "` + s.roomMgmtSchema + `"."room" WHERE "status"<>$1`
 	var rows *sql.Rows
 	var err error
@@ -212,7 +211,7 @@ func (s *RoomMgmtSentryService) initTimings() {
 	}
 }
 
-func (s *RoomMgmtSentryService) updateTimes(roomId string) {
+func (s *RoomSentryService) updateTimes(roomId string) {
 	log.Infof("Database changes in RoomId '%s'", roomId)
 
 	room, err := s.queryRoom(roomId)
@@ -303,7 +302,7 @@ func (s *RoomMgmtSentryService) updateTimes(roomId string) {
 	}
 }
 
-func (s *RoomMgmtSentryService) deleteAnnouncementsByRoom(roomId string) {
+func (s *RoomSentryService) deleteAnnouncementsByRoom(roomId string) {
 	toDelete := make([]AnnounceKey, 0)
 	toDeleteId := make([]int, 0)
 	for id, announcekey := range s.announcementKeys {
@@ -318,7 +317,7 @@ func (s *RoomMgmtSentryService) deleteAnnouncementsByRoom(roomId string) {
 	s.announcementKeys = deleteSlices(s.announcementKeys, toDeleteId)
 }
 
-func (s *RoomMgmtSentryService) sortTimes() {
+func (s *RoomSentryService) sortTimes() {
 	s.roomStartKeys = make([]string, 0)
 	for key := range s.roomStarts {
 		s.roomStartKeys = append(s.roomStartKeys, key)
@@ -344,7 +343,7 @@ func (s *RoomMgmtSentryService) sortTimes() {
 	})
 }
 
-func (s *RoomMgmtSentryService) startRoomStatus(roomId string) {
+func (s *RoomSentryService) startRoomStatus(roomId string) {
 	var err error
 	updateStmt := `update "` + s.roomMgmtSchema + `"."room" set "status"=$1 where "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -361,7 +360,7 @@ func (s *RoomMgmtSentryService) startRoomStatus(roomId string) {
 	log.Infof("startRoomStatus: %s", roomId)
 }
 
-func (s *RoomMgmtSentryService) endRoomStatus(roomId string) {
+func (s *RoomSentryService) endRoomStatus(roomId string) {
 	var err error
 	updateStmt := `update "` + s.roomMgmtSchema + `"."room" set "status"=$1 where "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -378,7 +377,7 @@ func (s *RoomMgmtSentryService) endRoomStatus(roomId string) {
 	log.Infof("endRoomStatus: %s", roomId)
 }
 
-func (s *RoomMgmtSentryService) sendAnnouncementStatus(announceId string) {
+func (s *RoomSentryService) sendAnnouncementStatus(announceId string) {
 	var err error
 	updateStmt := `update "` + s.roomMgmtSchema + `"."announcement" set "status"=$1 where "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -395,7 +394,7 @@ func (s *RoomMgmtSentryService) sendAnnouncementStatus(announceId string) {
 	log.Infof("sendAnnouncementStatus: %s", announceId)
 }
 
-func (s *RoomMgmtSentryService) startRooms() {
+func (s *RoomSentryService) startRooms() {
 	toDeleteId := make([]int, 0)
 	for id, key := range s.roomStartKeys {
 		if s.roomStarts[key].timeTick.After(time.Now()) {
@@ -410,7 +409,7 @@ func (s *RoomMgmtSentryService) startRooms() {
 	s.roomStartKeys = deleteSlices(s.roomStartKeys, toDeleteId)
 }
 
-func (s *RoomMgmtSentryService) endRooms() {
+func (s *RoomSentryService) endRooms() {
 	toDeleteId := make([]int, 0)
 	for id, key := range s.roomEndKeys {
 		if s.roomEnds[key].timeTick.After(time.Now()) {
@@ -425,7 +424,7 @@ func (s *RoomMgmtSentryService) endRooms() {
 	s.roomEndKeys = deleteSlices(s.roomEndKeys, toDeleteId)
 }
 
-func (s *RoomMgmtSentryService) sendAnnouncements() {
+func (s *RoomSentryService) sendAnnouncements() {
 	toDeleteId := make([]int, 0)
 	for id, key := range s.announcementKeys {
 		if s.announcements[key].timeTick.After(time.Now()) {
@@ -440,7 +439,7 @@ func (s *RoomMgmtSentryService) sendAnnouncements() {
 	s.announcementKeys = deleteSlices(s.announcementKeys, toDeleteId)
 }
 
-func (s *RoomMgmtSentryService) queryRoom(roomId string) (Room, error) {
+func (s *RoomSentryService) queryRoom(roomId string) (Room, error) {
 	queryStmt := `SELECT    "id",
 							"name",
 							"status",

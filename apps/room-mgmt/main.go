@@ -30,7 +30,7 @@ func main() {
 	}
 
 	log.Init(conf.Log.Level)
-	log.Infof("--- Starting Room-Mgmt HTTP-API Server ---")
+	log.Infof("--- Starting Room-Mgmt ---")
 
 	node := server.New()
 	if err := node.Start(conf); err != nil {

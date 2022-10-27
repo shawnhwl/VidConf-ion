@@ -14,7 +14,6 @@ import (
 func main() {
 	var confFile string
 	flag.StringVar(&confFile, "c", "app-room-recorder.toml", "config file")
-
 	flag.Parse()
 
 	if confFile == "" {
@@ -33,11 +32,15 @@ func main() {
 	log.Infof("--- Starting Room-Recorder ---")
 
 	quitCh := make(chan os.Signal, 1)
-	roomRecorder := recorder.NewRoomRecorder(conf, quitCh)
-	go roomRecorder.Start()
+	node := recorder.New()
+	if err := node.Start(conf, quitCh); err != nil {
+		log.Errorf("room-recorder init start: %v", err)
+		os.Exit(-1)
+	}
+	defer node.Close()
 
 	// Press Ctrl+C to exit the process
 	signal.Notify(quitCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	<-quitCh
-	roomRecorder.UpdateRoomRecord()
+	node.UpdateRoomRecord()
 }

@@ -18,12 +18,12 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-	log.Infof("onTrack track: %+v", track)
-	log.Infof("onTrack receiver: %+v", receiver)
+func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	log.Infof("onRTCTrack track: %+v", track)
+	log.Infof("onRTCTrack receiver: %+v", receiver)
 
 	trackCh := make(chan Track, 128)
-	quitCh := make(chan bool)
+	eofCh := make(chan bool)
 	go s.insertTracksOnInterval(
 		OnTrack{
 			time.Since(s.startTime),
@@ -37,7 +37,7 @@ func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPRe
 				track.Codec(),
 				track.RID()}},
 		trackCh,
-		quitCh)
+		eofCh)
 
 	// Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
 	go func() {
@@ -61,7 +61,7 @@ func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPRe
 			} else {
 				log.Errorf("%v", readErr)
 			}
-			quitCh <- true
+			eofCh <- true
 			return
 		}
 		if readCnt == 0 {
@@ -73,12 +73,16 @@ func (s *RoomRecorder) onTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPRe
 	}
 }
 
-func (s *RoomRecorder) onError(err error) {
-	log.Errorf("onError: %+v", err)
+func (s *RoomRecorderService) onRTCError(err error) {
+	log.Errorf("onRTCError: %+v", err)
+	s.timeReady = ""
+	if s.roomService != nil {
+		s.joinRoomCh <- true
+	}
 }
 
-func (s *RoomRecorder) onTrackEvent(event sdk.TrackEvent) {
-	log.Infof("onTrackEvent: %+v", event)
+func (s *RoomRecorderService) onRTCTrackEvent(event sdk.TrackEvent) {
+	log.Infof("onRTCTrackEvent: %+v", event)
 	tracks := make([]sdk.TrackInfo, 0)
 	for _, track := range event.Tracks {
 		log.Infof("onTrackEvent: %+v", track)
@@ -92,24 +96,29 @@ func (s *RoomRecorder) onTrackEvent(event sdk.TrackEvent) {
 			tracks})
 }
 
-func (s *RoomRecorder) onJoin(success bool, info sdk.RoomInfo, err error) {
-	log.Infof("OnJoin success = %v, info = %v, err = %v", success, info, err)
+func (s *RoomRecorderService) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
+	log.Infof("onRoomJoin success = %v, info = %v, err = %v", success, info, err)
 
-	s.roomRTC.OnTrack = s.onTrack
-	s.roomRTC.OnDataChannel = s.onDataChannel
-	s.roomRTC.OnError = s.onError
-	s.roomRTC.OnTrackEvent = s.onTrackEvent
-	s.roomRTC.OnSpeaker = s.onSpeaker
+	s.roomRTC.OnTrack = s.onRTCTrack
+	s.roomRTC.OnDataChannel = s.onRTCDataChannel
+	s.roomRTC.OnError = s.onRTCError
+	s.roomRTC.OnTrackEvent = s.onRTCTrackEvent
+	s.roomRTC.OnSpeaker = s.onRTCSpeaker
 
 	err = s.roomRTC.Join(s.roomId, s.systemUid)
 	if err != nil {
-		log.Panicf("RTC join error: %v", err)
+		s.timeReady = ""
+		if s.roomService != nil {
+			s.joinRoomCh <- true
+		}
+		return
 	}
+	s.timeReady = time.Now().Format(time.RFC3339)
 	log.Infof("rtc.Join ok roomid=%v", s.roomId)
 }
 
-func (s *RoomRecorder) onPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
-	log.Infof("OnPeerEvent state = %+v, peer = %+v", state, peer)
+func (s *RoomRecorderService) onRoomPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
+	log.Infof("onRoomPeerEvent state = %+v, peer = %+v", state, peer)
 	go s.insertPeerEvent(
 		PeerEvent{
 			time.Since(s.startTime),
@@ -118,76 +127,129 @@ func (s *RoomRecorder) onPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
 			peer.DisplayName})
 }
 
-func (s *RoomRecorder) onMessage(from string, to string, data map[string]interface{}) {
-	log.Infof("OnMessage from = %+v, to = %+v, data = %+v", from, to, data)
+func (s *RoomRecorderService) onRoomMessage(from string, to string, data map[string]interface{}) {
+	log.Infof("onRoomMessage from = %+v, to = %+v, data = %+v", from, to, data)
 	go s.insertChats(Chat{time.Since(s.startTime), data})
 }
 
-func (s *RoomRecorder) onDisconnect(sid, reason string) {
-	log.Infof("OnDisconnect sid = %+v, reason = %+v", sid, reason)
-	s.quitCh <- os.Interrupt
+func (s *RoomRecorderService) onRoomDisconnect(sid, reason string) {
+	log.Infof("onRoomDisconnect sid = %+v, reason = %+v", sid, reason)
+	s.timeReady = ""
+	if s.roomService != nil {
+		s.joinRoomCh <- true
+	}
 }
 
-func (s *RoomRecorder) onRoomError(err error) {
+func (s *RoomRecorderService) onRoomError(err error) {
 	log.Errorf("onRoomError %v", err)
-	time.Sleep(time.Second)
-	s.quitCh <- os.Interrupt
+	s.timeReady = ""
+	if s.roomService != nil {
+		s.joinRoomCh <- true
+	}
 }
 
-// TBD onLeave
-func (s *RoomRecorder) onLeave(success bool, err error) {
-	log.Warnf("Not Implemented onDataChannel: success %v, onLeave %v", success, err)
+// TBD onRoomLeave
+func (s *RoomRecorderService) onRoomLeave(success bool, err error) {
+	log.Warnf("Not Implemented onRoomLeave: success %v, onLeave %v", success, err)
 }
 
-// TBD onDataChannel
-func (s *RoomRecorder) onDataChannel(dc *webrtc.DataChannel) {
-	log.Warnf("Not Implemented onDataChannel: %+v", dc)
+// TBD onRTCDataChannel
+func (s *RoomRecorderService) onRTCDataChannel(dc *webrtc.DataChannel) {
+	log.Warnf("Not Implemented onRTCDataChannel: %+v", dc)
 }
 
-// TBD onSpeaker
-func (s *RoomRecorder) onSpeaker(event []string) {
-	log.Warnf("Not Implemented onSpeaker: %+v", event)
+// TBD onRTCSpeaker
+func (s *RoomRecorderService) onRTCSpeaker(event []string) {
+	log.Warnf("Not Implemented onRTCSpeaker: %+v", event)
 }
 
-func (s *RoomRecorder) joinRoom() {
-	var err error
-	s.roomRecordId = uuid.NewString()
-	s.startTime = time.Now()
-	insertStmt := `insert into  "` + s.roomRecordSchema + `"."roomRecord"(
+func (s *RoomRecorderService) closeRoom() {
+	if s.roomService != nil {
+		s.roomService.Leave(s.roomId, s.systemUid)
+		s.roomService.Close()
+		s.roomService = nil
+	}
+	if s.roomRTC != nil {
+		s.roomRTC.Close()
+		s.roomRTC = nil
+	}
+}
+
+func (s *RoomRecorderService) checkForRoomError() {
+	for {
+		<-s.joinRoomCh
+		s.closeRoom()
+		for {
+			time.Sleep(time.Second)
+			room, err := s.getRoomsByRoomid(s.roomId)
+			if err != nil {
+				s.quitCh <- os.Interrupt
+				return
+			}
+			if room.status == ROOM_ENDED {
+				s.quitCh <- os.Interrupt
+				return
+			}
+			if room.status == ROOM_BOOKED {
+				continue
+			}
+			s.roomService, s.roomRTC, err = getRoomService(s.conf)
+			if err == nil {
+				break
+			}
+		}
+		s.joinRoom()
+	}
+}
+
+func (s *RoomRecorderService) roomRecorderSentry() {
+	for {
+		time.Sleep(s.chopInterval)
+		s.UpdateRoomRecord()
+	}
+}
+
+func (s *RoomRecorderService) joinRoom() {
+	log.Infof("--- Joining Room ---")
+	if s.roomRecordId == "" {
+		s.roomRecordId = uuid.NewString()
+		s.startTime = time.Now()
+		insertStmt := `insert into  "` + s.roomRecordSchema + `"."roomRecord"(
 					"id",
 					"roomId",
 					"startTime",
 					"endTime",
 					"folderPath")
 					values($1, $2, $3, $4, $5)`
-	for retry := 0; retry < DB_RETRY; retry++ {
-		_, err = s.postgresDB.Exec(insertStmt,
-			s.roomRecordId,
-			s.roomId,
-			s.startTime,
-			time.Now(),
-			s.bucketName+s.folderName)
-		if err == nil {
-			break
+		var err error
+		for retry := 0; retry < DB_RETRY; retry++ {
+			_, err = s.postgresDB.Exec(insertStmt,
+				s.roomRecordId,
+				s.roomId,
+				s.startTime,
+				time.Now(),
+				s.bucketName+s.folderName)
+			if err == nil {
+				break
+			}
+			if strings.Contains(err.Error(), DUP_PK) {
+				s.roomRecordId = uuid.NewString()
+			}
 		}
-		if strings.Contains(err.Error(), DUP_PK) {
-			s.roomRecordId = uuid.NewString()
+		if err != nil {
+			log.Panicf("could not insert into database: %s", err)
+			return
 		}
 	}
-	if err != nil {
-		log.Panicf("could not insert into database: %s", err)
-		return
-	}
-
-	s.roomService.OnJoin = s.onJoin
-	s.roomService.OnPeerEvent = s.onPeerEvent
-	s.roomService.OnMessage = s.onMessage
-	s.roomService.OnDisconnect = s.onDisconnect
+	s.roomService.OnJoin = s.onRoomJoin
+	s.roomService.OnPeerEvent = s.onRoomPeerEvent
+	s.roomService.OnMessage = s.onRoomMessage
+	s.roomService.OnDisconnect = s.onRoomDisconnect
 	s.roomService.OnError = s.onRoomError
-	s.roomService.OnLeave = s.onLeave
+	s.roomService.OnLeave = s.onRoomLeave
 
 	// join room
-	err = s.roomService.Join(
+	err := s.roomService.Join(
 		sdk.JoinInfo{
 			Sid:         s.roomId,
 			Uid:         s.systemUid,
@@ -195,25 +257,20 @@ func (s *RoomRecorder) joinRoom() {
 		},
 	)
 	if err != nil {
-		deleteStmt := `delete from "` + s.roomRecordSchema + `"."roomRecord" where "id"=$1`
-		for retry := 0; retry < DB_RETRY; retry++ {
-			_, err = s.postgresDB.Exec(deleteStmt, s.roomRecordId)
-			if err == nil {
-				break
-			}
+		s.timeReady = ""
+		if s.roomService != nil {
+			s.joinRoomCh <- true
 		}
-		if err != nil {
-			log.Errorf("could not delete from database: %s", err)
-		}
-		log.Panicf("Session join error: %v", err)
 		return
 	}
 
 	log.Infof("room.Join ok roomid=%v", s.roomId)
-	go s.roomRecorderSentry()
 }
 
-func (s *RoomRecorder) UpdateRoomRecord() {
+func (s *RoomRecorderService) UpdateRoomRecord() {
+	if s.roomRecordId == "" {
+		return
+	}
 	updateStmt := `update "` + s.roomRecordSchema + `"."roomRecord" set "endTime"=$1 where "id"=$2`
 	var err error
 	for retry := 0; retry < DB_RETRY; retry++ {
@@ -227,14 +284,7 @@ func (s *RoomRecorder) UpdateRoomRecord() {
 	}
 }
 
-func (s *RoomRecorder) roomRecorderSentry() {
-	for {
-		time.Sleep(s.chopInterval)
-		s.UpdateRoomRecord()
-	}
-}
-
-func (s *RoomRecorder) insertTrackEvent(trackEvent TrackEvent) {
+func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 	var err error
 	insertStmt := `insert into "` + s.roomRecordSchema + `"."trackEvent"(
 					"id",
@@ -243,7 +293,7 @@ func (s *RoomRecorder) insertTrackEvent(trackEvent TrackEvent) {
 					"timeElapsed",
 					"state",
 					"trackEventId")
-					values($1, $2, $3, $4, $5)`
+					values($1, $2, $3, $4, $5, $6)`
 	trackEventId := uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -264,7 +314,7 @@ func (s *RoomRecorder) insertTrackEvent(trackEvent TrackEvent) {
 		log.Panicf("could not insert into database: %s", err)
 	}
 
-	insertStmt = `insert into "` + s.roomRecordSchema + `"."trackEvent"(
+	insertStmt = `insert into "` + s.roomRecordSchema + `"."trackInfo"(
 					"id",
 					"trackEventId",
 					"roomId",
@@ -280,7 +330,7 @@ func (s *RoomRecorder) insertTrackEvent(trackEvent TrackEvent) {
 					"width",
 					"height",
 					"frameRate")
-					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	for _, trackInfo := range trackEvent.tracks {
 		dbId := uuid.NewString()
 		for retry := 0; retry < DB_RETRY; retry++ {
@@ -317,7 +367,7 @@ func (s *RoomRecorder) insertTrackEvent(trackEvent TrackEvent) {
 	trackEvent = TrackEvent{}
 }
 
-func (s *RoomRecorder) insertPeerEvent(peerEvent PeerEvent) {
+func (s *RoomRecorderService) insertPeerEvent(peerEvent PeerEvent) {
 	var err error
 	insertStmt := `insert into "` + s.roomRecordSchema + `"."peerEvent"(
 					"id",
@@ -327,7 +377,7 @@ func (s *RoomRecorder) insertPeerEvent(peerEvent PeerEvent) {
 					"state",
 					"peerId",
 					"peerName")
-					values($1, $2, $3, $4, $5, $6)`
+					values($1, $2, $3, $4, $5, $6, $7)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -351,10 +401,10 @@ func (s *RoomRecorder) insertPeerEvent(peerEvent PeerEvent) {
 	peerEvent = PeerEvent{}
 }
 
-func (s *RoomRecorder) insertTracksOnInterval(
+func (s *RoomRecorderService) insertTracksOnInterval(
 	onTrack OnTrack,
 	trackCh chan Track,
-	quitCh chan bool) {
+	eofCh chan bool) {
 
 	dbId := s.insertOnTracks(onTrack)
 	trackId := onTrack.trackId
@@ -375,7 +425,7 @@ func (s *RoomRecorder) insertTracksOnInterval(
 		select {
 		case track := <-trackCh:
 			tracks = append(tracks, track)
-		case <-quitCh:
+		case <-eofCh:
 			s.insertTracks(
 				tracks,
 				trackId,
@@ -401,7 +451,7 @@ func (s *RoomRecorder) insertTracksOnInterval(
 	}
 }
 
-func (s *RoomRecorder) insertOnTracks(onTrack OnTrack) string {
+func (s *RoomRecorderService) insertOnTracks(onTrack OnTrack) string {
 	var err error
 	trackRemote, _ := json.Marshal(onTrack.trackRemote)
 	insertStmt := `insert into "` + s.roomRecordSchema + `"."onTrack"(
@@ -410,7 +460,7 @@ func (s *RoomRecorder) insertOnTracks(onTrack OnTrack) string {
 					"roomId",
 					"timeElapsed",
 					"trackRemote")
-					values($1, $2, $3, $4)`
+					values($1, $2, $3, $4, $5)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -432,7 +482,7 @@ func (s *RoomRecorder) insertOnTracks(onTrack OnTrack) string {
 	return dbId
 }
 
-func (s *RoomRecorder) insertTracks(
+func (s *RoomRecorderService) insertTracks(
 	tracks []Track,
 	trackID, dbId, subFolderName string,
 	startId, endId int) {
@@ -446,23 +496,23 @@ func (s *RoomRecorder) insertTracks(
 					"onTrackId",
 					"roomId",
 					"timeElapsed",
-					"filepath")
-					values($1, $2, $3, $4)`
+					"filePath")
+					values($1, $2, $3, $4, $5)`
 	objName := uuid.NewString()
-	filepath := subFolderName + objName
+	filePath := subFolderName + objName
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			objName,
 			dbId,
 			s.roomId,
 			tracks[startId].TimeElapsed,
-			filepath)
+			filePath)
 		if err == nil {
 			break
 		}
 		if strings.Contains(err.Error(), DUP_PK) {
 			objName = uuid.NewString()
-			filepath = subFolderName + objName
+			filePath = subFolderName + objName
 		}
 	}
 	if err != nil {
@@ -478,7 +528,7 @@ func (s *RoomRecorder) insertTracks(
 	for retry := 0; retry < DB_RETRY; retry++ {
 		uploadInfo, err = s.minioClient.PutObject(context.Background(),
 			s.bucketName,
-			s.folderName+filepath,
+			s.folderName+filePath,
 			data,
 			int64(data.Len()),
 			minio.PutObjectOptions{ContentType: "application/octet-stream"})
@@ -494,8 +544,6 @@ func (s *RoomRecorder) insertTracks(
 		tracks[id] = Track{}
 	}
 	log.Infof("successfully uploaded bytes: ", uploadInfo)
-
-	s.testDownload(s.folderName+filepath, "track"+objName)
 }
 
 type ChatPayload struct {
@@ -517,7 +565,7 @@ type Attachment struct {
 	Data *string `json:"data,omitempty"`
 }
 
-func (s *RoomRecorder) insertChats(chat Chat) {
+func (s *RoomRecorderService) insertChats(chat Chat) {
 	var err error
 	jsonStr, err := json.Marshal(chat.data)
 	if err != nil {
@@ -544,8 +592,8 @@ func (s *RoomRecorder) insertChats(chat Chat) {
 		return
 	}
 	if chatPayload.Msg.Timestamp == nil {
-		log.Errorf("chat message has no timestamp")
-		return
+		timeStamp := time.Now()
+		chatPayload.Msg.Timestamp = &timeStamp
 	}
 
 	if chatPayload.Msg.Text != nil {
@@ -560,7 +608,7 @@ func (s *RoomRecorder) insertChats(chat Chat) {
 	chat = Chat{}
 }
 
-func (s *RoomRecorder) insertChatText(chat Chat, chatPayload ChatPayload) {
+func (s *RoomRecorderService) insertChatText(chat Chat, chatPayload ChatPayload) {
 	var err error
 	insertStmt := `insert into "` + s.roomRecordSchema + `"."chatMessage"(
 					"id",
@@ -571,7 +619,7 @@ func (s *RoomRecorder) insertChatText(chat Chat, chatPayload ChatPayload) {
 					"userName",
 					"text",
 					"timestamp")
-					values($1, $2, $3, $4, $5, $6, $7)`
+					values($1, $2, $3, $4, $5, $6, $7, $8)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -595,7 +643,7 @@ func (s *RoomRecorder) insertChatText(chat Chat, chatPayload ChatPayload) {
 	}
 }
 
-func (s *RoomRecorder) insertChatFile(chat Chat, chatPayload ChatPayload) {
+func (s *RoomRecorderService) insertChatFile(chat Chat, chatPayload ChatPayload) {
 	var err error
 	if chatPayload.Msg.Base64File.Data == nil {
 		log.Errorf("chat attachment has no data")
@@ -621,9 +669,9 @@ func (s *RoomRecorder) insertChatFile(chat Chat, chatPayload ChatPayload) {
 					"fileSize",
 					"filePath",
 					"timestamp")
-					values($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	objName := uuid.NewString()
-	filepath := s.attachmentFolderName + objName
+	filePath := s.attachmentFolderName + objName
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			objName,
@@ -634,14 +682,14 @@ func (s *RoomRecorder) insertChatFile(chat Chat, chatPayload ChatPayload) {
 			*chatPayload.Msg.Name,
 			*chatPayload.Msg.Base64File.Name,
 			*chatPayload.Msg.Base64File.Size,
-			filepath,
+			filePath,
 			*chatPayload.Msg.Timestamp)
 		if err == nil {
 			break
 		}
 		if strings.Contains(err.Error(), DUP_PK) {
 			objName = uuid.NewString()
-			filepath = s.attachmentFolderName + objName
+			filePath = s.attachmentFolderName + objName
 		}
 	}
 	if err != nil {
@@ -653,7 +701,7 @@ func (s *RoomRecorder) insertChatFile(chat Chat, chatPayload ChatPayload) {
 	for retry := 0; retry < DB_RETRY; retry++ {
 		uploadInfo, err = s.minioClient.PutObject(context.Background(),
 			s.bucketName,
-			s.folderName+filepath,
+			s.folderName+filePath,
 			data,
 			int64(len(*chatPayload.Msg.Base64File.Data)),
 			minio.PutObjectOptions{ContentType: "application/octet-stream"})
@@ -665,14 +713,12 @@ func (s *RoomRecorder) insertChatFile(chat Chat, chatPayload ChatPayload) {
 		log.Panicf("could not upload file: %s", err)
 	}
 	log.Infof("successfully uploaded bytes: ", uploadInfo)
-
-	s.testDownload(s.folderName+filepath, "chat"+objName+".json")
 }
 
-func (s *RoomRecorder) testDownload(filepath, filename string) {
+func (s *RoomRecorderService) testDownload(filePath, filename string) {
 	object, err := s.minioClient.GetObject(context.Background(),
 		s.bucketName,
-		filepath,
+		filePath,
 		minio.GetObjectOptions{})
 	if err != nil {
 		log.Errorf("error downloading file: %s", err)
@@ -691,7 +737,7 @@ func (s *RoomRecorder) testDownload(filepath, filename string) {
 	log.Infof("Successfully downloaded bytes: %d", downloadInfo)
 }
 
-func (s *RoomRecorder) testUpload(filepath, filename string) {
+func (s *RoomRecorderService) testUpload(filePath, filename string) {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Errorf("error opening file: %s", err)
@@ -707,7 +753,7 @@ func (s *RoomRecorder) testUpload(filepath, filename string) {
 
 	uploadInfo, err := s.minioClient.PutObject(context.Background(),
 		s.bucketName,
-		filepath,
+		filePath,
 		file,
 		fileStat.Size(),
 		minio.PutObjectOptions{ContentType: "application/octet-stream"})

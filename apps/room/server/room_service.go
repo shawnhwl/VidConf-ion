@@ -33,10 +33,7 @@ type RoomService struct {
 	reservedUsernames []string
 }
 
-func NewRoomService(systemUid string,
-	reservedUsernames []string,
-	config db.Config,
-	conf PostgresConf) *RoomService {
+func getPostgresDB(conf PostgresConf) *sql.DB {
 	log.Infof("--- Connecting to PostgreSql ---")
 	addrSplit := strings.Split(conf.Addr, ":")
 	port, err := strconv.Atoi(addrSplit[1])
@@ -104,10 +101,19 @@ func NewRoomService(systemUid string,
 	if err != nil {
 		log.Panicf("Unable to execute sql statement: %v\n", err)
 	}
+	return postgresDB
+}
 
+func NewRoomService(systemUid string,
+	reservedUsernames []string,
+	config db.Config,
+	conf PostgresConf) *RoomService {
+
+	postgresDB := getPostgresDB(conf)
 	for id := range reservedUsernames {
 		reservedUsernames[id] = strings.ToUpper(reservedUsernames[id])
 	}
+
 	s := &RoomService{
 		rooms:             make(map[string]*Room),
 		closed:            make(chan struct{}),

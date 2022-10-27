@@ -92,13 +92,13 @@ func (c *Config) Load(file string) error {
 	return nil
 }
 
-// RoomMgmtSentry represents a room-sentry node
-type RoomMgmtSentry struct {
+// RoomSentry represents a room-sentry node
+type RoomSentry struct {
 	// for standalone running
 	runner.Service
 
 	// HTTP room-sentry service
-	RoomMgmtSentryService
+	RoomSentryService
 
 	// for distributed node running
 	ion.Node
@@ -110,15 +110,15 @@ type RoomMgmtSentry struct {
 }
 
 // New create a RoomMgmtSentry node instance
-func New() *RoomMgmtSentry {
-	api := &RoomMgmtSentry{
+func New() *RoomSentry {
+	api := &RoomSentry{
 		Node: ion.NewNode("room-sentry-" + util.RandomString(6)),
 	}
 	return api
 }
 
 // Start RoomMgmtSentry node
-func (r *RoomMgmtSentry) Start(conf Config) error {
+func (r *RoomSentry) Start(conf Config) error {
 	var err error
 
 	log.Infof("r.conf.Nats.URL===%+v", r.conf.Nats.URL)
@@ -137,7 +137,7 @@ func (r *RoomMgmtSentry) Start(conf Config) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.Node.NatsConn()
-	r.RoomMgmtSentryService = *NewRoomMgmtSentryService(conf)
+	r.RoomSentryService = *NewRoomMgmtSentryService(conf)
 
 	// Register reflection service on nats-rpc server.
 	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))
@@ -172,6 +172,6 @@ func (r *RoomMgmtSentry) Start(conf Config) error {
 }
 
 // Close all
-func (s *RoomMgmtSentry) Close() {
+func (s *RoomSentry) Close() {
 	s.Node.Close()
 }

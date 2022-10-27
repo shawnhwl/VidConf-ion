@@ -24,6 +24,10 @@ type RoomBooking struct {
 }
 
 func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (string, error) {
+	if roomId == s.rs.systemUid {
+		return "", nil
+	}
+
 	queryStmt := `SELECT    "name",
 							"status",
 							"allowedUserId"

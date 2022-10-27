@@ -17,11 +17,11 @@ const (
 	NOT_FOUND_PK string = "no rows in result set"
 )
 
-type RoomBooking struct {
+type Room struct {
 	status string
 }
 
-func (s *RoomRecorder) getRoomsByRoomid(roomId string) error {
+func (s *RoomRecorderService) getRoomsByRoomid(roomId string) (Room, error) {
 	queryStmt := `SELECT "status" FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 	var row *sql.Row
 	for retry := 0; retry < DB_RETRY; retry++ {
@@ -32,39 +32,23 @@ func (s *RoomRecorder) getRoomsByRoomid(roomId string) error {
 	}
 	if row.Err() != nil {
 		log.Panicf("could not query database: %s", row.Err().Error())
-		return row.Err()
+		return Room{}, row.Err()
 	}
-	var booking RoomBooking
-	err := row.Scan(&booking.status)
+	var room Room
+	err := row.Scan(&room.status)
 	if err != nil {
 		if strings.Contains(err.Error(), NOT_FOUND_PK) {
-			return errors.New(roomNotFound(roomId))
+			log.Panicf(roomNotFound(roomId))
+			return Room{}, errors.New(roomNotFound(roomId))
 		} else {
-			return err
+			log.Panicf("could not query database: %s", row.Err().Error())
+			return Room{}, err
 		}
 	}
 
-	if booking.status == ROOM_BOOKED {
-		log.Panicf(roomNotStarted(roomId))
-		return errors.New(roomNotStarted(roomId))
-	}
-
-	if booking.status == ROOM_ENDED {
-		log.Panicf(roomEnded(roomId))
-		return errors.New(roomEnded(roomId))
-	}
-
-	return nil
+	return room, nil
 }
 
 func roomNotFound(roomId string) string {
 	return "RoomId '" + roomId + "' not found in database"
-}
-
-func roomNotStarted(roomId string) string {
-	return "RoomId '" + roomId + "' session not started"
-}
-
-func roomEnded(roomId string) string {
-	return "RoomId '" + roomId + "' has ended"
 }
