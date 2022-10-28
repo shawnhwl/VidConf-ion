@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -16,6 +17,10 @@ import (
 	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
+)
+
+const (
+	RECONNECTION_INTERVAL time.Duration = 10 * time.Second
 )
 
 func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
@@ -75,10 +80,7 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 
 func (s *RoomRecorderService) onRTCError(err error) {
 	log.Errorf("onRTCError: %+v", err)
-	s.timeReady = ""
-	if s.roomService != nil {
-		s.joinRoomCh <- true
-	}
+	s.joinRoomCh <- true
 }
 
 func (s *RoomRecorderService) onRTCTrackEvent(event sdk.TrackEvent) {
@@ -107,10 +109,7 @@ func (s *RoomRecorderService) onRoomJoin(success bool, info sdk.RoomInfo, err er
 
 	err = s.roomRTC.Join(s.roomId, s.systemUid)
 	if err != nil {
-		s.timeReady = ""
-		if s.roomService != nil {
-			s.joinRoomCh <- true
-		}
+		s.joinRoomCh <- true
 		return
 	}
 	s.timeReady = time.Now().Format(time.RFC3339)
@@ -134,23 +133,22 @@ func (s *RoomRecorderService) onRoomMessage(from string, to string, data map[str
 
 func (s *RoomRecorderService) onRoomDisconnect(sid, reason string) {
 	log.Infof("onRoomDisconnect sid = %+v, reason = %+v", sid, reason)
-	s.timeReady = ""
-	if s.roomService != nil {
-		s.joinRoomCh <- true
-	}
+	s.joinRoomCh <- true
 }
 
 func (s *RoomRecorderService) onRoomError(err error) {
 	log.Errorf("onRoomError %v", err)
-	s.timeReady = ""
-	if s.roomService != nil {
-		s.joinRoomCh <- true
-	}
+	s.joinRoomCh <- true
 }
 
 // TBD onRoomLeave
 func (s *RoomRecorderService) onRoomLeave(success bool, err error) {
 	log.Warnf("Not Implemented onRoomLeave: success %v, onLeave %v", success, err)
+}
+
+// TBD onRoomInfo
+func (s *RoomRecorderService) onRoomInfo(info sdk.RoomInfo) {
+	log.Warnf("Not Implemented onRoomInfo: %v", info)
 }
 
 // TBD onRTCDataChannel
@@ -164,41 +162,73 @@ func (s *RoomRecorderService) onRTCSpeaker(event []string) {
 }
 
 func (s *RoomRecorderService) closeRoom() {
+	if s.roomRTC != nil {
+		s.roomRTC.Close()
+		s.roomRTC = nil
+	}
 	if s.roomService != nil {
 		s.roomService.Leave(s.roomId, s.systemUid)
 		s.roomService.Close()
 		s.roomService = nil
 	}
-	if s.roomRTC != nil {
-		s.roomRTC.Close()
-		s.roomRTC = nil
+	if s.sdkConnector != nil {
+		s.sdkConnector = nil
 	}
+}
+
+func getRoomService(config Config) (*sdk.Connector, *sdk.Room, *sdk.RTC, error) {
+	log.Infof("--- Connecting to Room Signal ---")
+	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
+	sdkConnector := sdk.NewConnector(config.Signal.Addr)
+	if sdkConnector == nil {
+		log.Errorf("connection to %s fail", config.Signal.Addr)
+		return nil, nil, nil, errors.New("")
+	}
+	roomService := sdk.NewRoom(sdkConnector)
+	roomRTC, err := sdk.NewRTC(sdkConnector)
+	if err != nil {
+		log.Errorf("rtc connector fail: %s", err)
+		return nil, nil, nil, errors.New("")
+	}
+	return sdkConnector, roomService, roomRTC, nil
+}
+
+func (s *RoomRecorderService) getRoomInfo() {
+	var room Room
+	for {
+		room = s.getRoomsByRoomid(s.roomId)
+		if room.status == ROOM_BOOKED {
+			log.Warnf("Room is not started yet, check again in a minute")
+			time.Sleep(time.Minute)
+			continue
+		}
+		break
+	}
+	s.startTime = room.startTime
+}
+
+func (s *RoomRecorderService) openRoom() {
+	s.closeRoom()
+	var err error
+	for {
+		time.Sleep(RECONNECTION_INTERVAL)
+		s.sdkConnector, s.roomService, s.roomRTC, err = getRoomService(s.conf)
+		if err == nil {
+			s.isSdkConnected = true
+			break
+		}
+	}
+	s.joinRoom()
 }
 
 func (s *RoomRecorderService) checkForRoomError() {
 	for {
 		<-s.joinRoomCh
-		s.closeRoom()
-		for {
-			time.Sleep(5 * time.Second)
-			room, err := s.getRoomsByRoomid(s.roomId)
-			if err != nil {
-				s.quitCh <- os.Interrupt
-				return
-			}
-			if room.status == ROOM_ENDED {
-				s.quitCh <- os.Interrupt
-				return
-			}
-			if room.status == ROOM_BOOKED {
-				continue
-			}
-			s.roomService, s.roomRTC, err = getRoomService(s.conf)
-			if err == nil {
-				break
-			}
+		s.timeReady = ""
+		if s.isSdkConnected {
+			s.isSdkConnected = false
+			go s.openRoom()
 		}
-		s.joinRoom()
 	}
 }
 
@@ -211,35 +241,43 @@ func (s *RoomRecorderService) roomRecorderSentry() {
 
 func (s *RoomRecorderService) joinRoom() {
 	log.Infof("--- Joining Room ---")
+	var err error
 	if s.roomRecordId == "" {
-		s.roomRecordId = uuid.NewString()
-		s.startTime = time.Now()
-		insertStmt := `insert into  "` + s.roomRecordSchema + `"."roomRecord"(
+		for retryDelay := 0; retryDelay < DB_RETRY; retryDelay++ {
+			s.roomRecordId = uuid.NewString()
+			insertStmt := `insert into  "` + s.roomRecordSchema + `"."roomRecord"(
 					"id",
 					"roomId",
 					"startTime",
 					"endTime",
 					"folderPath")
 					values($1, $2, $3, $4, $5)`
-		var err error
-		for retry := 0; retry < DB_RETRY; retry++ {
-			_, err = s.postgresDB.Exec(insertStmt,
-				s.roomRecordId,
-				s.roomId,
-				s.startTime,
-				time.Now(),
-				s.bucketName+s.folderName)
+			for retry := 0; retry < DB_RETRY; retry++ {
+				_, err = s.postgresDB.Exec(insertStmt,
+					s.roomRecordId,
+					s.roomId,
+					s.startTime,
+					time.Now(),
+					s.bucketName+s.folderName)
+				if err == nil {
+					break
+				}
+				if strings.Contains(err.Error(), DUP_PK) {
+					s.roomRecordId = uuid.NewString()
+				}
+			}
+			if err != nil {
+				log.Errorf("could not insert into database: %s", err)
+			}
 			if err == nil {
 				break
 			}
-			if strings.Contains(err.Error(), DUP_PK) {
-				s.roomRecordId = uuid.NewString()
-			}
+			time.Sleep(5 * time.Minute)
 		}
-		if err != nil {
-			log.Panicf("could not insert into database: %s", err)
-			return
-		}
+	}
+	if err != nil {
+		log.Errorf("could not proceed with room recording")
+		os.Exit(1)
 	}
 	s.roomService.OnJoin = s.onRoomJoin
 	s.roomService.OnPeerEvent = s.onRoomPeerEvent
@@ -247,19 +285,17 @@ func (s *RoomRecorderService) joinRoom() {
 	s.roomService.OnDisconnect = s.onRoomDisconnect
 	s.roomService.OnError = s.onRoomError
 	s.roomService.OnLeave = s.onRoomLeave
+	s.roomService.OnRoomInfo = s.onRoomInfo
 
 	// join room
-	err := s.roomService.Join(
+	err = s.roomService.Join(
 		sdk.JoinInfo{
 			Sid: s.roomId,
 			Uid: s.systemUid + sdk.RandomKey(16),
 		},
 	)
 	if err != nil {
-		s.timeReady = ""
-		if s.roomService != nil {
-			s.joinRoomCh <- true
-		}
+		s.joinRoomCh <- true
 		return
 	}
 
@@ -279,7 +315,7 @@ func (s *RoomRecorderService) UpdateRoomRecord() {
 		}
 	}
 	if err != nil {
-		log.Panicf("could not update database: %s", err)
+		log.Errorf("could not update database: %s", err)
 	}
 }
 
@@ -310,7 +346,8 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 		}
 	}
 	if err != nil {
-		log.Panicf("could not insert into database: %s", err)
+		log.Errorf("could not insert into database: %s", err)
+		return
 	}
 
 	insertStmt = `insert into "` + s.roomRecordSchema + `"."trackInfo"(
@@ -357,7 +394,8 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 			}
 		}
 		if err != nil {
-			log.Panicf("could not insert into database: %s", err)
+			log.Errorf("could not insert into database: %s", err)
+			return
 		}
 	}
 	for id := range trackEvent.tracks {
@@ -395,7 +433,8 @@ func (s *RoomRecorderService) insertPeerEvent(peerEvent PeerEvent) {
 		}
 	}
 	if err != nil {
-		log.Panicf("could not insert into database: %s", err)
+		log.Errorf("could not insert into database: %s", err)
+		return
 	}
 	peerEvent = PeerEvent{}
 }
@@ -476,7 +515,7 @@ func (s *RoomRecorderService) insertOnTracks(onTrack OnTrack) string {
 		}
 	}
 	if err != nil {
-		log.Panicf("could not insert into database: %s", err)
+		log.Errorf("could not insert into database: %s", err)
 	}
 	return dbId
 }
@@ -515,13 +554,14 @@ func (s *RoomRecorderService) insertTracks(
 		}
 	}
 	if err != nil {
-		log.Panicf("could not insert into database: %s", err)
+		log.Errorf("could not insert into database: %s", err)
 	}
 
 	data := new(bytes.Buffer)
 	err = gob.NewEncoder(data).Encode(tracks[startId:endId])
 	if err != nil {
-		log.Panicf("track encoding error:", err)
+		log.Errorf("track encoding error:", err)
+		return
 	}
 	var uploadInfo minio.UploadInfo
 	for retry := 0; retry < DB_RETRY; retry++ {
@@ -536,7 +576,8 @@ func (s *RoomRecorderService) insertTracks(
 		}
 	}
 	if err != nil {
-		log.Panicf("could not upload file: %s", err)
+		log.Errorf("could not upload file: %s", err)
+		return
 	}
 	for id := startId; id < endId; id++ {
 		tracks[id].Data = nil
@@ -638,7 +679,7 @@ func (s *RoomRecorderService) insertChatText(chat Chat, chatPayload ChatPayload)
 		}
 	}
 	if err != nil {
-		log.Panicf("could not insert into database: %s", err)
+		log.Errorf("could not insert into database: %s", err)
 	}
 }
 
@@ -692,7 +733,8 @@ func (s *RoomRecorderService) insertChatFile(chat Chat, chatPayload ChatPayload)
 		}
 	}
 	if err != nil {
-		log.Panicf("could not insert into database: %s", err)
+		log.Errorf("could not insert into database: %s", err)
+		return
 	}
 
 	data := bytes.NewReader([]byte(*chatPayload.Msg.Base64File.Data))
@@ -709,7 +751,7 @@ func (s *RoomRecorderService) insertChatFile(chat Chat, chatPayload ChatPayload)
 		}
 	}
 	if err != nil {
-		log.Panicf("could not upload file: %s", err)
+		log.Errorf("could not upload file: %s", err)
 	}
 	log.Infof("successfully uploaded bytes: ", uploadInfo)
 }

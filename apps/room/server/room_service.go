@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,7 +39,8 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 	addrSplit := strings.Split(conf.Addr, ":")
 	port, err := strconv.Atoi(addrSplit[1])
 	if err != nil {
-		log.Panicf("invalid port number: %s\n", addrSplit[1])
+		log.Errorf("invalid port number: %s\n", addrSplit[1])
+		os.Exit(1)
 	}
 	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		addrSplit[0],
@@ -55,7 +57,8 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to connect to database: %v\n", err)
+		log.Errorf("Unable to connect to database: %v\n", err)
+		os.Exit(1)
 	}
 	// postgresDB.Ping
 	for retry := 0; retry < DB_RETRY; retry++ {
@@ -65,7 +68,8 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to ping database: %v\n", err)
+		log.Errorf("Unable to ping database: %v\n", err)
+		os.Exit(1)
 	}
 	// create schema
 	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + conf.RoomMgmtSchema + `"`
@@ -76,7 +80,8 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "room"
 	createStmt = `CREATE TABLE IF NOT EXISTS
@@ -99,7 +104,8 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	return postgresDB
 }

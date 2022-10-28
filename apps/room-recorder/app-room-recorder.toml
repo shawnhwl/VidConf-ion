@@ -18,10 +18,10 @@ roomMgmtSchema = "room-mgmt"
 roomRecordSchema = "room-recorder"
 
 [minio]
-endpoint = "play.min.io"
-useSSL = true
-username = "Q3AM3UQ867SPQQA43P2F"
-password = "zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG"
+endpoint = "localhost:9000"
+useSSL = false
+username = "minioadmin"
+password = "minioadmin"
 bucketName = "vidconf"
 
 [signal]
@@ -30,11 +30,11 @@ addr = "localhost:5551"
 
 [recorder]
 # The address the monitoring server will listen on.
-addr = "0.0.0.0:7082"
+addr = "0.0.0.0:7081"
 # Roomid to record session
-roomid = "47c18217-b2f9-4093-9afd-44a0cdf96563"
+roomid = "8b99c565-8837-4d38-8820-02ad021deb96"
 # time in seconds per chopped section
-choppedInSeconds = 5
+choppedInSeconds = 500000
 # UserId and UserName used by system to join the room sessions
 # Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml" & "app-room-recorder.toml"
 system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2-1"

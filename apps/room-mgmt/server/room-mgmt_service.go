@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,8 @@ const (
 	RETRY_COUNT  int    = 3
 	DUP_PK       string = "duplicate key value violates unique constraint"
 	NOT_FOUND_PK string = "no rows in result set"
+
+	RECONNECTION_INTERVAL time.Duration = 10 * time.Second
 )
 
 type Announcement struct {
@@ -1040,26 +1043,24 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 	room.updatedBy = *patchRoom.Requestor
 	if patchRoom.Name != nil {
 		room.name = *patchRoom.Name
-	} else {
-		room.name = ""
 	}
 	if patchRoom.StartTime != nil {
-		room.startTime = *patchRoom.StartTime
-		if room.status == ROOM_STARTED && room.startTime.After(time.Now()) {
-			errorString := fmt.Sprintf("RoomId '%s' has started and new startTime is not due", room.id)
+		if room.status == ROOM_STARTED && room.startTime != *patchRoom.StartTime {
+			errorString := fmt.Sprintf("RoomId '%s' has already started", room.id)
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
 			return errors.New(errorString)
 		}
+		room.startTime = *patchRoom.StartTime
 	}
 	if patchRoom.EndTime != nil {
-		room.endTime = *patchRoom.EndTime
 		if room.endTime.Before(room.startTime) {
 			errorString := "endtime is before starttime"
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
 			return errors.New(errorString)
 		}
+		room.endTime = *patchRoom.EndTime
 	}
 	if len(patchRoom.AllowedUserId) == 0 {
 		room.allowedUserId = make(pq.StringArray, 0)
@@ -1685,13 +1686,15 @@ func (s *RoomMgmtService) kickUser(roomId, userId string) (error, error) {
 }
 
 type RoomMgmtService struct {
-	conf       Config
-	joinRoomCh chan bool
+	conf           Config
+	joinRoomCh     chan bool
+	isSdkConnected bool
 
 	timeLive  string
 	timeReady string
 
-	roomService *sdk.Room
+	sdkConnector *sdk.Connector
+	roomService  *sdk.Room
 
 	postgresDB       *sql.DB
 	roomMgmtSchema   string
@@ -1713,7 +1716,8 @@ func getMinioClient(config Config) *minio.Client {
 		Secure: config.Minio.UseSSL,
 	})
 	if err != nil {
-		log.Panicf("Unable to connect to filestore: %v\n", err)
+		log.Errorf("Unable to connect to filestore: %v\n", err)
+		os.Exit(1)
 	}
 	err = minioClient.MakeBucket(context.Background(),
 		config.Minio.BucketName,
@@ -1722,7 +1726,8 @@ func getMinioClient(config Config) *minio.Client {
 		exists, errBucketExists := minioClient.BucketExists(context.Background(),
 			config.Minio.BucketName)
 		if errBucketExists != nil || !exists {
-			log.Panicf("Unable to create bucket: %v\n", err)
+			log.Errorf("Unable to create bucket: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
@@ -1734,7 +1739,8 @@ func getPostgresDB(config Config) *sql.DB {
 	addrSplit := strings.Split(config.Postgres.Addr, ":")
 	port, err := strconv.Atoi(addrSplit[1])
 	if err != nil {
-		log.Panicf("invalid port number: %s\n", addrSplit[1])
+		log.Errorf("invalid port number: %s\n", addrSplit[1])
+		os.Exit(1)
 	}
 	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		addrSplit[0],
@@ -1751,7 +1757,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to connect to database: %v\n", err)
+		log.Errorf("Unable to connect to database: %v\n", err)
+		os.Exit(1)
 	}
 	// postgresDB.Ping
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -1761,7 +1768,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to ping database: %v\n", err)
+		log.Errorf("Unable to ping database: %v\n", err)
+		os.Exit(1)
 	}
 	// create RoomMgmtSchema schema
 	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"`
@@ -1772,7 +1780,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "room"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."room"(
@@ -1794,7 +1803,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "announcement"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."announcement"(
@@ -1817,7 +1827,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 
 	// create RoomRecordSchema schema
@@ -1829,7 +1840,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "roomRecord"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."roomRecord"(
@@ -1846,7 +1858,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "chatMessage"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
@@ -1867,7 +1880,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "chatAttachment"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
@@ -1890,22 +1904,11 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 
 	return postgresDB
-}
-
-func getRoomService(config Config) (*sdk.Room, error) {
-	log.Infof("--- Connecting to Room Signal ---")
-	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
-	sdk_connector := sdk.NewConnector(config.Signal.Addr)
-	if sdk_connector == nil {
-		log.Errorf("connection to %s fail", config.Signal.Addr)
-		return nil, errors.New("")
-	}
-	roomService := sdk.NewRoom(sdk_connector)
-	return roomService, nil
 }
 
 func NewRoomMgmtService(config Config) *RoomMgmtService {
@@ -1914,8 +1917,9 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	postgresDB := getPostgresDB(config)
 
 	s := &RoomMgmtService{
-		conf:       config,
-		joinRoomCh: make(chan bool, 32),
+		conf:           config,
+		joinRoomCh:     make(chan bool, 32),
+		isSdkConnected: true,
 
 		timeLive:  timeLive,
 		timeReady: "",
@@ -1927,7 +1931,8 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		roomService: nil,
+		sdkConnector: nil,
+		roomService:  nil,
 
 		onChanges:    make(chan string, 2048),
 		systemUid:    config.RoomMgmt.SystemUid,
@@ -1969,21 +1974,45 @@ func (s *RoomMgmtService) closeRoom() {
 		s.roomService.Close()
 		s.roomService = nil
 	}
+	if s.sdkConnector != nil {
+		s.sdkConnector = nil
+	}
+}
+
+func getRoomService(config Config) (*sdk.Connector, *sdk.Room, error) {
+	log.Infof("--- Connecting to Room Signal ---")
+	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
+	sdkConnector := sdk.NewConnector(config.Signal.Addr)
+	if sdkConnector == nil {
+		log.Errorf("connection to %s fail", config.Signal.Addr)
+		return nil, nil, errors.New("")
+	}
+	roomService := sdk.NewRoom(sdkConnector)
+	return sdkConnector, roomService, nil
+}
+
+func (s *RoomMgmtService) openRoom() {
+	s.closeRoom()
+	var err error
+	for {
+		time.Sleep(RECONNECTION_INTERVAL)
+		s.sdkConnector, s.roomService, err = getRoomService(s.conf)
+		if err == nil {
+			s.isSdkConnected = true
+			break
+		}
+	}
+	s.joinRoom()
 }
 
 func (s *RoomMgmtService) checkForRoomError() {
 	for {
 		<-s.joinRoomCh
-		s.closeRoom()
-		for {
-			time.Sleep(time.Second)
-			roomService, err := getRoomService(s.conf)
-			if err == nil {
-				s.roomService = roomService
-				break
-			}
+		s.timeReady = ""
+		if s.isSdkConnected {
+			s.isSdkConnected = false
+			go s.openRoom()
 		}
-		s.joinRoom()
 	}
 }
 
@@ -2002,22 +2031,20 @@ func (s *RoomMgmtService) onRoomMessage(from string, to string, data map[string]
 
 func (s *RoomMgmtService) onRoomDisconnect(sid, reason string) {
 	log.Infof("onRoomDisconnect sid = %+v, reason = %+v", sid, reason)
-	s.timeReady = ""
-	if s.roomService != nil {
-		s.joinRoomCh <- true
-	}
+	s.joinRoomCh <- true
 }
 
 func (s *RoomMgmtService) onRoomError(err error) {
 	log.Errorf("onRoomError %v", err)
-	s.timeReady = ""
-	if s.roomService != nil {
-		s.joinRoomCh <- true
-	}
+	s.joinRoomCh <- true
 }
 
 func (s *RoomMgmtService) onRoomLeave(success bool, err error) {
 	log.Infof("onRoomLeave: success %v, onLeave %v", success, err)
+}
+
+func (s *RoomMgmtService) onRoomInfo(info sdk.RoomInfo) {
+	log.Infof("onRoomInfo: %v", info)
 }
 
 func (s *RoomMgmtService) joinRoom() {
@@ -2027,6 +2054,7 @@ func (s *RoomMgmtService) joinRoom() {
 	s.roomService.OnDisconnect = s.onRoomDisconnect
 	s.roomService.OnError = s.onRoomError
 	s.roomService.OnLeave = s.onRoomLeave
+	s.roomService.OnRoomInfo = s.onRoomInfo
 
 	// join room
 	err := s.roomService.Join(
@@ -2036,10 +2064,7 @@ func (s *RoomMgmtService) joinRoom() {
 		},
 	)
 	if err != nil {
-		s.timeReady = ""
-		if s.roomService != nil {
-			s.joinRoomCh <- true
-		}
+		s.joinRoomCh <- true
 		return
 	}
 }
@@ -2063,5 +2088,6 @@ func (s *RoomMgmtService) start() {
 	router.GET("/rooms/:roomid/chats/:fromindex/:toindex", s.getRoomsByRoomidChatRange)
 
 	log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
-	log.Panicf("%s", router.Run(s.conf.RoomMgmt.Addr))
+	log.Errorf("%s", router.Run(s.conf.RoomMgmt.Addr))
+	os.Exit(1)
 }

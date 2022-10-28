@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ const (
 	FROM_END          string = "end"
 
 	RETRY_COUNT int = 3
+
+	RECONNECTION_INTERVAL time.Duration = 10 * time.Second
 )
 
 type StartRooms struct {
@@ -48,13 +51,15 @@ type AnnounceKey struct {
 }
 
 type RoomSentryService struct {
-	conf       Config
-	joinRoomCh chan bool
+	conf           Config
+	joinRoomCh     chan bool
+	isSdkConnected bool
 
 	timeLive  string
 	timeReady string
 
-	roomService *sdk.Room
+	sdkConnector *sdk.Connector
+	roomService  *sdk.Room
 
 	postgresDB     *sql.DB
 	roomMgmtSchema string
@@ -99,7 +104,8 @@ func getPostgresDB(config Config) *sql.DB {
 	addrSplit := strings.Split(config.Postgres.Addr, ":")
 	port, err := strconv.Atoi(addrSplit[1])
 	if err != nil {
-		log.Panicf("invalid port number: %s\n", addrSplit[1])
+		log.Errorf("invalid port number: %s\n", addrSplit[1])
+		os.Exit(1)
 	}
 	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		addrSplit[0],
@@ -116,7 +122,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to connect to database: %v\n", err)
+		log.Errorf("Unable to connect to database: %v\n", err)
+		os.Exit(1)
 	}
 	// postgresDB.Ping
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -126,7 +133,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to ping database: %v\n", err)
+		log.Errorf("Unable to ping database: %v\n", err)
+		os.Exit(1)
 	}
 	// create RoomMgmtSchema schema
 	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"`
@@ -137,7 +145,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "room"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."room"(
@@ -159,7 +168,8 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 	// create table "announcement"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."announcement"(
@@ -182,22 +192,11 @@ func getPostgresDB(config Config) *sql.DB {
 		}
 	}
 	if err != nil {
-		log.Panicf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
 	}
 
 	return postgresDB
-}
-
-func getRoomService(config Config) (*sdk.Room, error) {
-	log.Infof("--- Connecting to Room Signal ---")
-	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
-	sdk_connector := sdk.NewConnector(config.Signal.Addr)
-	if sdk_connector == nil {
-		log.Errorf("connection to %s fail", config.Signal.Addr)
-		return nil, errors.New("")
-	}
-	roomService := sdk.NewRoom(sdk_connector)
-	return roomService, nil
 }
 
 func NewRoomMgmtSentryService(config Config) *RoomSentryService {
@@ -205,13 +204,15 @@ func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 	postgresDB := getPostgresDB(config)
 
 	s := &RoomSentryService{
-		conf:       config,
-		joinRoomCh: make(chan bool, 32),
+		conf:           config,
+		joinRoomCh:     make(chan bool, 32),
+		isSdkConnected: true,
 
 		timeLive:  timeLive,
 		timeReady: "",
 
-		roomService: nil,
+		sdkConnector: nil,
+		roomService:  nil,
 
 		postgresDB:     postgresDB,
 		roomMgmtSchema: config.Postgres.RoomMgmtSchema,
@@ -244,21 +245,45 @@ func (s *RoomSentryService) closeRoom() {
 		s.roomService.Close()
 		s.roomService = nil
 	}
+	if s.sdkConnector != nil {
+		s.sdkConnector = nil
+	}
+}
+
+func getRoomService(config Config) (*sdk.Connector, *sdk.Room, error) {
+	log.Infof("--- Connecting to Room Signal ---")
+	log.Infof("attempt gRPC connection to %s", config.Signal.Addr)
+	sdkConnector := sdk.NewConnector(config.Signal.Addr)
+	if sdkConnector == nil {
+		log.Errorf("connection to %s fail", config.Signal.Addr)
+		return nil, nil, errors.New("")
+	}
+	roomService := sdk.NewRoom(sdkConnector)
+	return sdkConnector, roomService, nil
+}
+
+func (s *RoomSentryService) openRoom() {
+	s.closeRoom()
+	var err error
+	for {
+		time.Sleep(RECONNECTION_INTERVAL)
+		s.sdkConnector, s.roomService, err = getRoomService(s.conf)
+		if err == nil {
+			s.isSdkConnected = true
+			break
+		}
+	}
+	s.joinRoom()
 }
 
 func (s *RoomSentryService) checkForRoomError() {
 	for {
 		<-s.joinRoomCh
-		s.closeRoom()
-		for {
-			time.Sleep(time.Second)
-			roomService, err := getRoomService(s.conf)
-			if err == nil {
-				s.roomService = roomService
-				break
-			}
+		s.timeReady = ""
+		if s.isSdkConnected {
+			s.isSdkConnected = false
+			go s.openRoom()
 		}
-		s.joinRoom()
 	}
 }
 
@@ -277,22 +302,20 @@ func (s *RoomSentryService) onRoomMessage(from string, to string, data map[strin
 
 func (s *RoomSentryService) onRoomDisconnect(sid, reason string) {
 	log.Infof("onRoomDisconnect sid = %+v, reason = %+v", sid, reason)
-	s.timeReady = ""
-	if s.roomService != nil {
-		s.joinRoomCh <- true
-	}
+	s.joinRoomCh <- true
 }
 
 func (s *RoomSentryService) onRoomError(err error) {
 	log.Errorf("onRoomError %v", err)
-	s.timeReady = ""
-	if s.roomService != nil {
-		s.joinRoomCh <- true
-	}
+	s.joinRoomCh <- true
 }
 
 func (s *RoomSentryService) onRoomLeave(success bool, err error) {
 	log.Infof("onRoomLeave: success %v, onLeave %v", success, err)
+}
+
+func (s *RoomSentryService) onRoomInfo(info sdk.RoomInfo) {
+	log.Infof("onRoomInfo: %v", info)
 }
 
 func (s *RoomSentryService) joinRoom() {
@@ -302,6 +325,7 @@ func (s *RoomSentryService) joinRoom() {
 	s.roomService.OnDisconnect = s.onRoomDisconnect
 	s.roomService.OnError = s.onRoomError
 	s.roomService.OnLeave = s.onRoomLeave
+	s.roomService.OnRoomInfo = s.onRoomInfo
 
 	// join room
 	err := s.roomService.Join(
@@ -311,10 +335,7 @@ func (s *RoomSentryService) joinRoom() {
 		},
 	)
 	if err != nil {
-		s.timeReady = ""
-		if s.roomService != nil {
-			s.joinRoomCh <- true
-		}
+		s.joinRoomCh <- true
 		return
 	}
 }
@@ -329,5 +350,6 @@ func (s *RoomSentryService) start() {
 	router.GET("/rooms/:roomid", s.getRoomid)
 
 	log.Infof("HTTP service starting at %s", s.conf.RoomMgmtSentry.Addr)
-	log.Panicf("%s", router.Run(s.conf.RoomMgmtSentry.Addr))
+	log.Errorf("%s", router.Run(s.conf.RoomMgmtSentry.Addr))
+	os.Exit(1)
 }

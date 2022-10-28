@@ -2,8 +2,9 @@ package recorder
 
 import (
 	"database/sql"
-	"errors"
+	"os"
 	"strings"
+	"time"
 
 	log "github.com/pion/ion-log"
 )
@@ -18,35 +19,52 @@ const (
 )
 
 type Room struct {
-	status string
+	status    string
+	startTime time.Time
 }
 
-func (s *RoomRecorderService) getRoomsByRoomid(roomId string) (Room, error) {
-	queryStmt := `SELECT "status" FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
+func (s *RoomRecorderService) getRoomsByRoomid(roomId string) Room {
+	queryStmt := `SELECT "status", "startTime" FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 	var row *sql.Row
-	for retry := 0; retry < DB_RETRY; retry++ {
-		row = s.postgresDB.QueryRow(queryStmt, roomId)
-		if row.Err() == nil {
+	var room Room
+	var err error
+	for retryDelay := 0; retryDelay < DB_RETRY; retryDelay++ {
+		for retry := 0; retry < DB_RETRY; retry++ {
+			row = s.postgresDB.QueryRow(queryStmt, roomId)
+			if row.Err() == nil {
+				break
+			}
+		}
+		if row.Err() != nil {
+			log.Errorf("could not query database: %s", row.Err().Error())
+			err = row.Err()
+		} else {
+			err = row.Scan(&room.status, &room.startTime)
+			if err != nil {
+				if strings.Contains(err.Error(), NOT_FOUND_PK) {
+					log.Errorf(roomNotFound(roomId))
+					os.Exit(1)
+					return Room{}
+				} else {
+					log.Errorf("could not query database: %s", row.Err().Error())
+				}
+			}
+		}
+		if err == nil {
 			break
 		}
+		time.Sleep(5 * time.Minute)
 	}
-	if row.Err() != nil {
-		log.Panicf("could not query database: %s", row.Err().Error())
-		return Room{}, row.Err()
-	}
-	var room Room
-	err := row.Scan(&room.status)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
-			log.Panicf(roomNotFound(roomId))
-			return Room{}, errors.New(roomNotFound(roomId))
-		} else {
-			log.Panicf("could not query database: %s", row.Err().Error())
-			return Room{}, err
-		}
+		log.Errorf("could not proceed with room recording")
+		os.Exit(1)
+	}
+	if room.status == ROOM_ENDED {
+		log.Errorf("Room has ended, could not proceed with room recording")
+		os.Exit(1)
 	}
 
-	return room, nil
+	return room
 }
 
 func roomNotFound(roomId string) string {
