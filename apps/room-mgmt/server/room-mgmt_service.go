@@ -160,11 +160,12 @@ type GetChatRange struct {
 type ChatPayloads []ChatPayload
 
 type ChatPayload struct {
-	Uid        string      `json:"uid"`
-	Name       string      `json:"name"`
-	Text       *string     `json:"text,omitempty"`
-	Timestamp  time.Time   `json:"timestamp"`
-	Base64File *Attachment `json:"base64File,omitempty"`
+	RoomRecordId *string     `json:"roomRecordId,omitempty"`
+	Uid          string      `json:"uid"`
+	Name         string      `json:"name"`
+	Text         *string     `json:"text,omitempty"`
+	Timestamp    time.Time   `json:"timestamp"`
+	Base64File   *Attachment `json:"base64File,omitempty"`
 }
 
 type Attachment struct {
@@ -773,6 +774,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 			chatPayloads[id].Base64File.Data = buf.String()
 			chatPayloads[id].Base64File.FilePath = nil
 		}
+		chatPayloads[id].RoomRecordId = nil
 		getChatRange.Msg = append(getChatRange.Msg, chatPayloads[id])
 	}
 
@@ -868,7 +870,8 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 
 	chats := make(ChatPayloads, 0)
 	var chatrows *sql.Rows
-	queryStmt = `SELECT "userId",
+	queryStmt = `SELECT "roomRecordId",
+						"userId",
 						"userName",
 						"text",
 						"timestamp"
@@ -889,7 +892,9 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 	for chatrows.Next() {
 		var chat ChatPayload
 		var text string
-		err := chatrows.Scan(&chat.Uid,
+		var roomRecordId string
+		err := chatrows.Scan(&roomRecordId,
+			&chat.Uid,
 			&chat.Name,
 			&text,
 			&chat.Timestamp)
@@ -899,38 +904,16 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 			return GetChats{}, ChatPayloads{}, "", err
 		}
+		chat.RoomRecordId = &roomRecordId
 		chat.Text = &text
 		chats = append(chats, chat)
 	}
-	log.Infof("chats count:%d", len(chats))
 	sort.Sort(chats)
-	log.Infof("chats count:%d", len(chats))
-	toDeleteIds := make([]int, 0)
-	for id := 0; id < len(chats); id++ {
-		for scanId := id + 1; scanId < len(chats); scanId++ {
-			if chats[id].Timestamp != chats[scanId].Timestamp {
-				continue
-			}
-			if chats[id].Uid != chats[scanId].Uid {
-				continue
-			}
-			if chats[id].Name != chats[scanId].Name {
-				continue
-			}
-			if *chats[id].Text != *chats[scanId].Text {
-				continue
-			}
-			toDeleteIds = append(toDeleteIds, id)
-			break
-		}
-	}
-	log.Infof("toDeleteIds count:%d", len(toDeleteIds))
-	chats = deleteSlices(chats, toDeleteIds)
-	log.Infof("chats count:%d", len(chats))
 
 	attachments := make(ChatPayloads, 0)
 	var attachmentrows *sql.Rows
-	queryStmt = `SELECT "userId",
+	queryStmt = `SELECT "roomRecordId",
+						"userId",
 						"userName",
 						"fileName",
 						"fileSize",
@@ -954,7 +937,9 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 		var attachment ChatPayload
 		var fileinfo Attachment
 		var filePath string
-		err := chatrows.Scan(&attachment.Uid,
+		var roomRecordId string
+		err := chatrows.Scan(&roomRecordId,
+			&attachment.Uid,
 			&attachment.Name,
 			&fileinfo.Name,
 			&fileinfo.Size,
@@ -968,34 +953,63 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 		}
 		fileinfo.FilePath = &filePath
 		attachment.Base64File = &fileinfo
+		attachment.RoomRecordId = &roomRecordId
 		attachments = append(attachments, attachment)
 	}
-	log.Infof("attachments count:%d", len(attachments))
 	sort.Sort(attachments)
-	toDeleteIds = make([]int, 0)
-	for id := 0; id < len(attachments); id++ {
-		for scanId := id + 1; scanId < len(attachments); scanId++ {
-			if attachments[id].Timestamp != attachments[scanId].Timestamp {
-				continue
+
+	if len(roomRecords) > 1 {
+		toDeleteIds := make([]int, 0)
+		for id := 0; id < len(chats); id++ {
+			for scanId := id + 1; scanId < len(chats); scanId++ {
+				if *chats[id].RoomRecordId == *chats[scanId].RoomRecordId {
+					continue
+				}
+				if chats[id].Timestamp != chats[scanId].Timestamp {
+					continue
+				}
+				if chats[id].Uid != chats[scanId].Uid {
+					continue
+				}
+				if chats[id].Name != chats[scanId].Name {
+					continue
+				}
+				if *chats[id].Text != *chats[scanId].Text {
+					continue
+				}
+				toDeleteIds = append(toDeleteIds, id)
+				break
 			}
-			if attachments[id].Uid != attachments[scanId].Uid {
-				continue
-			}
-			if attachments[id].Name != attachments[scanId].Name {
-				continue
-			}
-			if attachments[id].Base64File.Name != attachments[scanId].Base64File.Name {
-				continue
-			}
-			if attachments[id].Base64File.Size != attachments[scanId].Base64File.Size {
-				continue
-			}
-			toDeleteIds = append(toDeleteIds, id)
-			break
 		}
+		log.Infof("toDeleteIds count:%d", len(toDeleteIds))
+		chats = deleteSlices(chats, toDeleteIds)
+		toDeleteIds = make([]int, 0)
+		for id := 0; id < len(attachments); id++ {
+			for scanId := id + 1; scanId < len(attachments); scanId++ {
+				if *attachments[id].RoomRecordId == *attachments[scanId].RoomRecordId {
+					continue
+				}
+				if attachments[id].Timestamp != attachments[scanId].Timestamp {
+					continue
+				}
+				if attachments[id].Uid != attachments[scanId].Uid {
+					continue
+				}
+				if attachments[id].Name != attachments[scanId].Name {
+					continue
+				}
+				if attachments[id].Base64File.Name != attachments[scanId].Base64File.Name {
+					continue
+				}
+				if attachments[id].Base64File.Size != attachments[scanId].Base64File.Size {
+					continue
+				}
+				toDeleteIds = append(toDeleteIds, id)
+				break
+			}
+		}
+		attachments = deleteSlices(attachments, toDeleteIds)
 	}
-	attachments = deleteSlices(attachments, toDeleteIds)
-	log.Infof("attachments count:%d", len(attachments))
 
 	chats = append(chats, attachments...)
 	return getChats, chats, folderPath, nil
