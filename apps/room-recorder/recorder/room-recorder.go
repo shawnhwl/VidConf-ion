@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"os"
+	"time"
 
 	natsDiscoveryClient "github.com/cloudwebrtc/nats-discovery/pkg/client"
 	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
@@ -190,6 +191,9 @@ func (s *RoomRecorder) Close() {
 	s.Node.Close()
 }
 
-func (s *RoomRecorder) UpdateRoomRecord() {
+func (s *RoomRecorder) FinalizeRoomRecord() {
+	close(s.runningCh)
 	s.RoomRecorderService.UpdateRoomRecord()
+	time.Sleep(time.Second)
+	s.waitUpload.Wait()
 }

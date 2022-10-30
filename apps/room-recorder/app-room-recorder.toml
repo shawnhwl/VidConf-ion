@@ -23,6 +23,10 @@ useSSL = false
 username = "minioadmin"
 password = "minioadmin"
 bucketName = "vidconf"
+folderName = "8b99c565-8837-4d38-8820-02ad021deb96"
+attachmentFolderName = "attachment"
+videoFolderName = "video"
+audioFolderName = "audio"
 
 [signal]
 # The addr for grpc signalling

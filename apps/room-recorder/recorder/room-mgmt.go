@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	log "github.com/pion/ion-log"
@@ -61,7 +62,7 @@ func (s *RoomRecorderService) getRoomsByRoomid(roomId string) Room {
 	}
 	if room.status == ROOM_ENDED {
 		log.Errorf("Room has ended, could not proceed with room recording")
-		os.Exit(1)
+		s.quitCh <- syscall.SIGTERM
 	}
 
 	return room

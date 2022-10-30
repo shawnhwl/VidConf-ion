@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,10 +28,10 @@ type PeerEvent struct {
 }
 
 type TrackEvent struct {
-	timeElapsed  time.Duration
-	state        sdk.TrackEvent_State
-	trackEventId string
-	tracks       []sdk.TrackInfo
+	timeElapsed time.Duration
+	state       sdk.TrackEvent_State
+	peerId      string
+	tracks      []sdk.TrackInfo
 }
 
 type TrackRemote struct {
@@ -65,6 +66,8 @@ type RoomRecorderService struct {
 	quitCh         chan os.Signal
 	joinRoomCh     chan bool
 	isSdkConnected bool
+	runningCh      chan bool
+	waitUpload     *sync.WaitGroup
 
 	timeLive  string
 	timeReady string
@@ -264,7 +267,7 @@ func getPostgresDB(config Config) *sql.DB {
 					"roomId"       UUID NOT NULL,
 					"timeElapsed"  BIGINT NOT NULL,
 					"state"        INT NOT NULL,
-					"trackEventId" TEXT NOT NULL,
+					"peerId"       TEXT NOT NULL,
 					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < DB_RETRY; retry++ {
@@ -444,6 +447,8 @@ func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderS
 		quitCh:         quitCh,
 		joinRoomCh:     make(chan bool, 32),
 		isSdkConnected: true,
+		runningCh:      make(chan bool),
+		waitUpload:     new(sync.WaitGroup),
 
 		timeLive:  timeLive,
 		timeReady: "",

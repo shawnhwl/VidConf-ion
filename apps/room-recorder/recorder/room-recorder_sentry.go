@@ -327,8 +327,10 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 					"roomId",
 					"timeElapsed",
 					"state",
-					"trackEventId")
+					"peerId")
 					values($1, $2, $3, $4, $5, $6)`
+	s.waitUpload.Add(1)
+	defer s.waitUpload.Done()
 	trackEventId := uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -337,7 +339,7 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 			s.roomId,
 			trackEvent.timeElapsed,
 			trackEvent.state,
-			trackEvent.trackEventId)
+			trackEvent.peerId)
 		if err == nil {
 			break
 		}
@@ -415,6 +417,8 @@ func (s *RoomRecorderService) insertPeerEvent(peerEvent PeerEvent) {
 					"peerId",
 					"peerName")
 					values($1, $2, $3, $4, $5, $6, $7)`
+	s.waitUpload.Add(1)
+	defer s.waitUpload.Done()
 	dbId := uuid.NewString()
 	for retry := 0; retry < DB_RETRY; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -444,6 +448,8 @@ func (s *RoomRecorderService) insertTracksOnInterval(
 	trackCh chan Track,
 	eofCh chan bool) {
 
+	s.waitUpload.Add(1)
+	defer s.waitUpload.Done()
 	dbId := s.insertOnTracks(onTrack)
 	trackId := onTrack.trackId
 
@@ -473,6 +479,18 @@ func (s *RoomRecorderService) insertTracksOnInterval(
 				len(tracks))
 			return
 		default:
+			time.Sleep(time.Millisecond)
+			_, isRunning := <-s.runningCh
+			if !isRunning {
+				s.insertTracks(
+					tracks,
+					trackId,
+					dbId,
+					subFolderName,
+					trackSavedId,
+					len(tracks))
+				return
+			}
 			if time.Since(lastSavedTime) > s.chopInterval {
 				lastSavedTime = time.Now()
 				newSavedId := len(tracks)
@@ -528,6 +546,9 @@ func (s *RoomRecorderService) insertTracks(
 	if startId >= endId {
 		return
 	}
+
+	s.waitUpload.Add(1)
+	defer s.waitUpload.Done()
 	var err error
 	insertStmt := `insert into "` + s.roomRecordSchema + `"."trackStream"(
 					"id",
@@ -606,6 +627,8 @@ type Attachment struct {
 }
 
 func (s *RoomRecorderService) insertChats(chat Chat) {
+	s.waitUpload.Add(1)
+	defer s.waitUpload.Done()
 	var err error
 	jsonStr, err := json.Marshal(chat.data)
 	if err != nil {
