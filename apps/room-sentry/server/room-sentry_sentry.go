@@ -51,6 +51,8 @@ type Room struct {
 }
 
 func (s *RoomSentryService) createRoom(roomId, roomname string) error {
+	s.startRoomStatus(roomId)
+
 	err := s.roomService.CreateRoom(sdk.RoomInfo{Sid: roomId, Name: roomname})
 	if err != nil {
 		output := fmt.Sprintf("Error creating roomId '%s' : %v", roomId, err)
@@ -123,6 +125,8 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 }
 
 func (s *RoomSentryService) endRoom(roomId, roomname, reason string) error {
+	s.endRoomStatus(roomId)
+
 	err := s.createRoom(roomId, roomname)
 	if err != nil {
 		return err
@@ -356,6 +360,7 @@ func (s *RoomSentryService) startRoomStatus(roomId string) {
 	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
+		return
 	}
 	log.Infof("startRoomStatus: %s", roomId)
 }
@@ -373,6 +378,7 @@ func (s *RoomSentryService) endRoomStatus(roomId string) {
 	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
+		return
 	}
 	log.Infof("endRoomStatus: %s", roomId)
 }
@@ -390,6 +396,7 @@ func (s *RoomSentryService) sendAnnouncementStatus(announceId string) {
 	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
+		return
 	}
 	log.Infof("sendAnnouncementStatus: %s", announceId)
 }
@@ -402,7 +409,6 @@ func (s *RoomSentryService) startRooms() {
 		}
 		log.Infof("startRoom %v, %v", key, s.roomStarts[key])
 		go s.createRoom(key, s.roomStarts[key].roomname)
-		go s.startRoomStatus(key)
 		delete(s.roomStarts, key)
 		toDeleteId = append(toDeleteId, id)
 	}
@@ -417,7 +423,6 @@ func (s *RoomSentryService) endRooms() {
 		}
 		log.Infof("endRoom %v, %v", key, s.roomEnds[key])
 		go s.endRoom(key, s.roomEnds[key].roomname, s.roomEnds[key].reason)
-		go s.endRoomStatus(key)
 		delete(s.roomEnds, key)
 		toDeleteId = append(toDeleteId, id)
 	}
