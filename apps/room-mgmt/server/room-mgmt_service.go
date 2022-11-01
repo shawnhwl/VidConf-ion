@@ -43,8 +43,6 @@ const (
 	FROM_START          string = "start"
 	FROM_END            string = "end"
 
-	ATTACHMENT_FOLDERNAME string = "/attachment/"
-
 	RETRY_COUNT  int    = 3
 	DUP_PK       string = "duplicate key value violates unique constraint"
 	NOT_FOUND_PK string = "no rows in result set"

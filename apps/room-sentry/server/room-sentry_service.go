@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	NOT_READY         string = "service is not yet ready"
 	ANNOUNCEMENT_SENT string = "Sent"
 	ROOM_BOOKED       string = "Booked"
 	ROOM_STARTED      string = "Started"
@@ -78,7 +79,7 @@ func (s *RoomSentryService) getLiveness(c *gin.Context) {
 func (s *RoomSentryService) getReadiness(c *gin.Context) {
 	log.Infof("GET /readiness")
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, "Not Ready yet")
+		c.String(http.StatusInternalServerError, NOT_READY)
 		return
 	}
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
