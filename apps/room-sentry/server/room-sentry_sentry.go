@@ -51,9 +51,15 @@ type Room struct {
 }
 
 func (s *RoomSentryService) createRoom(roomId, roomname string) error {
+	sdkConnector, roomService, err := s.getRoomService(s.conf.Signal.Addr)
+	if err != nil {
+		return err
+	}
+	defer s.closeRoomService(sdkConnector, roomService)
+
 	s.startRoomStatus(roomId)
 
-	err := s.roomService.CreateRoom(sdk.RoomInfo{Sid: roomId, Name: roomname})
+	err = roomService.CreateRoom(sdk.RoomInfo{Sid: roomId, Name: roomname})
 	if err != nil {
 		output := fmt.Sprintf("Error creating roomId '%s' : %v", roomId, err)
 		log.Errorf(output)
@@ -64,7 +70,13 @@ func (s *RoomSentryService) createRoom(roomId, roomname string) error {
 }
 
 func (s *RoomSentryService) postMessage(roomId, message string, toId []string) error {
-	peerinfo := s.roomService.GetPeers(roomId)
+	sdkConnector, roomService, err := s.getRoomService(s.conf.Signal.Addr)
+	if err != nil {
+		return err
+	}
+	defer s.closeRoomService(sdkConnector, roomService)
+
+	peerinfo := roomService.GetPeers(roomId)
 	if len(peerinfo) == 0 {
 		output := fmt.Sprintf("Roomid '%s' is empty", roomId)
 		log.Warnf(output)
@@ -79,7 +91,7 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 		},
 	}
 	if len(toId) == 0 {
-		err := s.roomService.SendMessage(roomId, s.systemUid, "all", payload)
+		err := roomService.SendMessage(roomId, s.systemUid, "all", payload)
 		if err != nil {
 			output := fmt.Sprintf("Error sending message '%s' to all users in roomId '%s' : %v", message, roomId, err)
 			log.Errorf(output)
@@ -100,7 +112,7 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 				err = errors.New(output)
 				continue
 			}
-			err1 := s.roomService.SendMessage(roomId, s.systemUid, userId, payload)
+			err1 := roomService.SendMessage(roomId, s.systemUid, userId, payload)
 			if err1 != nil {
 				err = err1
 			}
@@ -125,21 +137,27 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 }
 
 func (s *RoomSentryService) endRoom(roomId, roomname, reason string) error {
+	sdkConnector, roomService, err := s.getRoomService(s.conf.Signal.Addr)
+	if err != nil {
+		return err
+	}
+	defer s.closeRoomService(sdkConnector, roomService)
+
 	s.endRoomStatus(roomId)
 
-	err := s.createRoom(roomId, roomname)
+	err = s.createRoom(roomId, roomname)
 	if err != nil {
 		return err
 	}
 	s.postMessage(roomId, "Room has ended, Goodbye", make([]string, 0))
-	peerinfo := s.roomService.GetPeers(roomId)
+	peerinfo := roomService.GetPeers(roomId)
 	for _, peer := range peerinfo {
 		s.kickUser(roomId, peer.Uid)
 	}
 	if reason == "" {
 		reason = "session ended"
 	}
-	err = s.roomService.EndRoom(roomId, reason, true)
+	err = roomService.EndRoom(roomId, reason, true)
 	if err != nil {
 		output := fmt.Sprintf("Error ending room '%s' : %v", roomId, err)
 		log.Errorf(output)
@@ -150,10 +168,16 @@ func (s *RoomSentryService) endRoom(roomId, roomname, reason string) error {
 }
 
 func (s *RoomSentryService) kickUser(roomId, userId string) (error, error) {
-	peerinfo := s.roomService.GetPeers(roomId)
+	sdkConnector, roomService, err := s.getRoomService(s.conf.Signal.Addr)
+	if err != nil {
+		return nil, err
+	}
+	defer s.closeRoomService(sdkConnector, roomService)
+
+	peerinfo := roomService.GetPeers(roomId)
 	for _, peer := range peerinfo {
 		if userId == peer.Uid {
-			err := s.roomService.RemovePeer(roomId, peer.Uid)
+			err := roomService.RemovePeer(roomId, peer.Uid)
 			if err != nil {
 				output := fmt.Sprintf("Error kicking '%s' from room '%s' : %v", userId, roomId, err)
 				log.Errorf(output)
@@ -166,6 +190,29 @@ func (s *RoomSentryService) kickUser(roomId, userId string) (error, error) {
 	output := fmt.Sprintf("userId '%s' not found in roomId '%s'", userId, roomId)
 	log.Warnf(output)
 	return errors.New(output), nil
+}
+
+func (s *RoomSentryService) getRoomService(signalAddr string) (*sdk.Connector, *sdk.Room, error) {
+	log.Infof("--- Connecting to Room Signal ---")
+	log.Infof("attempt gRPC connection to %s", signalAddr)
+	sdkConnector := sdk.NewConnector(signalAddr)
+	if sdkConnector == nil {
+		log.Errorf("connection to %s fail", signalAddr)
+		return nil, nil, errors.New("")
+	}
+	roomService := sdk.NewRoom(sdkConnector)
+	return sdkConnector, roomService, nil
+}
+
+func (s *RoomSentryService) closeRoomService(sdkConnector *sdk.Connector, roomService *sdk.Room) {
+	if roomService != nil {
+		roomService.Leave(s.systemUid, s.systemUid)
+		roomService.Close()
+		roomService = nil
+	}
+	if sdkConnector != nil {
+		sdkConnector = nil
+	}
 }
 
 func (s *RoomSentryService) checkForServiceCall() {
