@@ -13,7 +13,10 @@ const (
 	ROOM_BOOKED string = "Booked"
 	ROOM_ENDED  string = "Ended"
 
-	DB_RETRY     int    = 3
+	ATTACHMENT_FOLDERNAME string = "/attachment/"
+
+	RETRY_COUNT  int    = 3
+	DUP_PK       string = "duplicate key value violates unique constraint"
 	NOT_FOUND_PK string = "no rows in result set"
 )
 
@@ -34,7 +37,7 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 					FROM "` + s.rs.roomMgmtSchema + `"."room" WHERE "id"=$1`
 
 	var row *sql.Row
-	for retry := 0; retry < DB_RETRY; retry++ {
+	for retry := 0; retry < RETRY_COUNT; retry++ {
 		row = s.rs.postgresDB.QueryRow(queryStmt, roomId)
 		if row.Err() == nil {
 			break

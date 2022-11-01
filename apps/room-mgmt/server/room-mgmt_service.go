@@ -41,6 +41,8 @@ const (
 	FROM_START          string = "start"
 	FROM_END            string = "end"
 
+	ATTACHMENT_FOLDERNAME string = "/attachment/"
+
 	RETRY_COUNT  int    = 3
 	DUP_PK       string = "duplicate key value violates unique constraint"
 	NOT_FOUND_PK string = "no rows in result set"
@@ -160,12 +162,11 @@ type GetChatRange struct {
 type ChatPayloads []ChatPayload
 
 type ChatPayload struct {
-	RoomRecordId *string     `json:"roomRecordId,omitempty"`
-	Uid          string      `json:"uid"`
-	Name         string      `json:"name"`
-	Text         *string     `json:"text,omitempty"`
-	Timestamp    time.Time   `json:"timestamp"`
-	Base64File   *Attachment `json:"base64File,omitempty"`
+	Uid        string      `json:"uid"`
+	Name       string      `json:"name"`
+	Text       *string     `json:"text,omitempty"`
+	Timestamp  time.Time   `json:"timestamp"`
+	Base64File *Attachment `json:"base64File,omitempty"`
 }
 
 type Attachment struct {
@@ -173,13 +174,6 @@ type Attachment struct {
 	Size     int     `json:"size"`
 	Data     string  `json:"data"`
 	FilePath *string `json:"filePath,omitempty"`
-}
-
-type RoomRecord struct {
-	id         string
-	startTime  time.Time
-	endTime    time.Time
-	folderPath string
 }
 
 func (s *RoomMgmtService) getLiveness(c *gin.Context) {
@@ -292,9 +286,12 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	}
 
 	s.onChanges <- roomId
+	getRoom, err := s.queryGetRoom(roomId, c)
+	if err != nil {
+		return
+	}
 	log.Infof("posted roomId '%s'", roomId)
-	link := fmt.Sprintf("%s?room=%s", s.conf.WebApp.Url, roomId)
-	c.JSON(http.StatusOK, map[string]interface{}{"link": link})
+	c.JSON(http.StatusOK, getRoom)
 }
 
 func (s *RoomMgmtService) getRooms(c *gin.Context) {
@@ -687,16 +684,56 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	c.JSON(http.StatusOK, getRoom)
 }
 
-func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
+func (s *RoomMgmtService) getRoomsByRoomidChatinfo(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/chats", roomId)
 
-	getChats, chatPayloads, _, err := s.getChats(roomId, c)
+	getChats, chatPayloads, err := s.getChats(roomId, c)
 	if err != nil {
 		return
 	}
 	getChats.ChatCount = len(chatPayloads)
 	c.JSON(http.StatusOK, getChats)
+}
+
+func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
+	roomId := c.Param("roomid")
+	log.Infof("GET /rooms/%s/chats", roomId)
+
+	_, chatPayloads, err := s.getChats(roomId, c)
+	if err != nil {
+		return
+	}
+
+	sort.Sort(chatPayloads)
+	var getChatRange GetChatRange
+	getChatRange.Msg = chatPayloads
+	for id := range getChatRange.Msg {
+		if getChatRange.Msg[id].Base64File != nil {
+			object, err := s.minioClient.GetObject(context.Background(),
+				s.bucketName,
+				roomId+*getChatRange.Msg[id].Base64File.FilePath,
+				minio.GetObjectOptions{})
+			if err != nil {
+				errorString := fmt.Sprintf("could not download attachment: %s", err)
+				log.Errorf(errorString)
+				c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+				return
+			}
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(object)
+			if err != nil {
+				errorString := fmt.Sprintf("could not process download: %s", err)
+				log.Errorf(errorString)
+				c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+				return
+			}
+			getChatRange.Msg[id].Base64File.Data = buf.String()
+			getChatRange.Msg[id].Base64File.FilePath = nil
+		}
+	}
+
+	c.JSON(http.StatusOK, getChatRange)
 }
 
 func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
@@ -728,7 +765,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 		fromIndex, toIndex = toIndex, fromIndex
 	}
 
-	_, chatPayloads, folderPath, err := s.getChats(roomId, c)
+	_, chatPayloads, err := s.getChats(roomId, c)
 	if err != nil {
 		return
 	}
@@ -743,19 +780,14 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 		toIndex = count - 1
 	}
 
-	folderPathSlice := strings.Split(folderPath, "/")
-	folderPath = "/" + strings.Join(folderPathSlice[1:], "/")
-	log.Infof("folderPath: %s", folderPath)
-
 	sort.Sort(chatPayloads)
-
 	var getChatRange GetChatRange
 	getChatRange.Msg = make([]ChatPayload, 0)
 	for id := fromIndex; id <= toIndex; id++ {
 		if chatPayloads[id].Base64File != nil {
 			object, err := s.minioClient.GetObject(context.Background(),
 				s.bucketName,
-				*chatPayloads[id].Base64File.FilePath,
+				roomId+*chatPayloads[id].Base64File.FilePath,
 				minio.GetObjectOptions{})
 			if err != nil {
 				errorString := fmt.Sprintf("could not download attachment: %s", err)
@@ -774,7 +806,6 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 			chatPayloads[id].Base64File.Data = buf.String()
 			chatPayloads[id].Base64File.FilePath = nil
 		}
-		chatPayloads[id].RoomRecordId = nil
 		getChatRange.Msg = append(getChatRange.Msg, chatPayloads[id])
 	}
 
@@ -805,7 +836,7 @@ func (s *RoomMgmtService) roomHasEnded(roomId string) string {
 	return "RoomId '" + roomId + "' session has ended"
 }
 
-func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, ChatPayloads, string, error) {
+func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, ChatPayloads, error) {
 	getChats, err := s.queryChats(roomId)
 	if err != nil {
 		if strings.Contains(err.Error(), NOT_FOUND_PK) {
@@ -816,65 +847,20 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		}
-		return GetChats{}, ChatPayloads{}, "", err
+		return GetChats{}, ChatPayloads{}, err
 	}
 	if getChats.Status == ROOM_BOOKED {
 		log.Warnf(s.roomNotStarted(roomId))
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotStarted(roomId)})
-		return GetChats{}, ChatPayloads{}, "", errors.New(s.roomNotStarted(roomId))
+		return GetChats{}, ChatPayloads{}, errors.New(s.roomNotStarted(roomId))
 	}
-
-	roomRecords := make([]RoomRecord, 0)
-	var rows *sql.Rows
-	queryStmt := `SELECT    "id",
-							"startTime",
-							"endTime",
-							"folderPath"
-					FROM "` + s.roomRecordSchema + `"."roomRecord" WHERE "roomId"=$1`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		rows, err = s.postgresDB.Query(queryStmt, roomId)
-		if err == nil {
-			break
-		}
-	}
-	if err != nil {
-		errorString := fmt.Sprintf("could not query database: %s", err)
-		log.Errorf(errorString)
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return GetChats{}, ChatPayloads{}, "", err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var roomRecord RoomRecord
-		err := rows.Scan(&roomRecord.id,
-			&roomRecord.startTime,
-			&roomRecord.endTime,
-			&roomRecord.folderPath)
-		if err != nil {
-			errorString := fmt.Sprintf("could not query database: %s", err)
-			log.Errorf(errorString)
-			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-			return GetChats{}, ChatPayloads{}, "", err
-		}
-		roomRecords = append(roomRecords, roomRecord)
-	}
-
-	if len(roomRecords) == 0 {
-		errorString := "Room Recorder is not enabled"
-		log.Errorf(errorString)
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return GetChats{}, ChatPayloads{}, "", errors.New(errorString)
-	}
-	folderPath := roomRecords[0].folderPath
 
 	chats := make(ChatPayloads, 0)
 	var chatrows *sql.Rows
-	queryStmt = `SELECT "roomRecordId",
-						"userId",
-						"userName",
-						"text",
-						"timestamp"
+	queryStmt := `SELECT "userId",
+						 "userName",
+						 "text",
+						 "timestamp"
 					FROM "` + s.roomRecordSchema + `"."chatMessage" WHERE "roomId"=$1`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		chatrows, err = s.postgresDB.Query(queryStmt, roomId)
@@ -886,15 +872,13 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 		errorString := fmt.Sprintf("could not query database: %s", err)
 		log.Errorf(errorString)
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return GetChats{}, ChatPayloads{}, "", err
+		return GetChats{}, ChatPayloads{}, err
 	}
 	defer chatrows.Close()
 	for chatrows.Next() {
 		var chat ChatPayload
 		var text string
-		var roomRecordId string
-		err := chatrows.Scan(&roomRecordId,
-			&chat.Uid,
+		err := chatrows.Scan(&chat.Uid,
 			&chat.Name,
 			&text,
 			&chat.Timestamp)
@@ -902,9 +886,8 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 			errorString := fmt.Sprintf("could not query database: %s", err)
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-			return GetChats{}, ChatPayloads{}, "", err
+			return GetChats{}, ChatPayloads{}, err
 		}
-		chat.RoomRecordId = &roomRecordId
 		chat.Text = &text
 		chats = append(chats, chat)
 	}
@@ -912,8 +895,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 
 	attachments := make(ChatPayloads, 0)
 	var attachmentrows *sql.Rows
-	queryStmt = `SELECT "roomRecordId",
-						"userId",
+	queryStmt = `SELECT "userId",
 						"userName",
 						"fileName",
 						"fileSize",
@@ -930,16 +912,14 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 		errorString := fmt.Sprintf("could not query database: %s", err)
 		log.Errorf(errorString)
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return GetChats{}, ChatPayloads{}, "", err
+		return GetChats{}, ChatPayloads{}, err
 	}
 	defer attachmentrows.Close()
 	for attachmentrows.Next() {
 		var attachment ChatPayload
 		var fileinfo Attachment
 		var filePath string
-		var roomRecordId string
-		err := chatrows.Scan(&roomRecordId,
-			&attachment.Uid,
+		err := chatrows.Scan(&attachment.Uid,
 			&attachment.Name,
 			&fileinfo.Name,
 			&fileinfo.Size,
@@ -949,70 +929,16 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 			errorString := fmt.Sprintf("could not query database: %s", err)
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-			return GetChats{}, ChatPayloads{}, "", err
+			return GetChats{}, ChatPayloads{}, err
 		}
 		fileinfo.FilePath = &filePath
 		attachment.Base64File = &fileinfo
-		attachment.RoomRecordId = &roomRecordId
 		attachments = append(attachments, attachment)
 	}
 	sort.Sort(attachments)
 
-	if len(roomRecords) > 1 {
-		toDeleteIds := make([]int, 0)
-		for id := 0; id < len(chats); id++ {
-			for scanId := id + 1; scanId < len(chats); scanId++ {
-				if *chats[id].RoomRecordId == *chats[scanId].RoomRecordId {
-					continue
-				}
-				if chats[id].Timestamp != chats[scanId].Timestamp {
-					continue
-				}
-				if chats[id].Uid != chats[scanId].Uid {
-					continue
-				}
-				if chats[id].Name != chats[scanId].Name {
-					continue
-				}
-				if *chats[id].Text != *chats[scanId].Text {
-					continue
-				}
-				toDeleteIds = append(toDeleteIds, id)
-				break
-			}
-		}
-		log.Infof("toDeleteIds count:%d", len(toDeleteIds))
-		chats = deleteSlices(chats, toDeleteIds)
-		toDeleteIds = make([]int, 0)
-		for id := 0; id < len(attachments); id++ {
-			for scanId := id + 1; scanId < len(attachments); scanId++ {
-				if *attachments[id].RoomRecordId == *attachments[scanId].RoomRecordId {
-					continue
-				}
-				if attachments[id].Timestamp != attachments[scanId].Timestamp {
-					continue
-				}
-				if attachments[id].Uid != attachments[scanId].Uid {
-					continue
-				}
-				if attachments[id].Name != attachments[scanId].Name {
-					continue
-				}
-				if attachments[id].Base64File.Name != attachments[scanId].Base64File.Name {
-					continue
-				}
-				if attachments[id].Base64File.Size != attachments[scanId].Base64File.Size {
-					continue
-				}
-				toDeleteIds = append(toDeleteIds, id)
-				break
-			}
-		}
-		attachments = deleteSlices(attachments, toDeleteIds)
-	}
-
 	chats = append(chats, attachments...)
-	return getChats, chats, folderPath, nil
+	return getChats, chats, nil
 }
 
 func (s *RoomMgmtService) getEditableRoom(roomId string, c *gin.Context) (Room, error) {
@@ -1857,35 +1783,14 @@ func getPostgresDB(config Config) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
-	// create table "roomRecord"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."roomRecord"(
-					"id"         UUID PRIMARY KEY,
-					"roomId"     UUID NOT NULL,
-					"startTime"  TIMESTAMP NOT NULL,
-					"endTime"    TIMESTAMP NOT NULL,
-					"folderPath" TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
 	// create table "chatMessage"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
 					"id"           UUID PRIMARY KEY,
-					"roomRecordId" UUID NOT NULL,
 					"roomId"       UUID NOT NULL,
-					"timeElapsed"  BIGINT NOT NULL,
+					"timestamp"    TIMESTAMP NOT NULL,
 					"userId"       TEXT NOT NULL,
 					"userName"     TEXT NOT NULL,
 					"text"         TEXT NOT NULL,
-					"timestamp"    TIMESTAMP NOT NULL,
-					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -1900,16 +1805,13 @@ func getPostgresDB(config Config) *sql.DB {
 	// create table "chatAttachment"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
 					"id"           UUID PRIMARY KEY,
-					"roomRecordId" UUID NOT NULL,
 					"roomId"       UUID NOT NULL,
-					"timeElapsed"  BIGINT NOT NULL,
+					"timestamp"    TIMESTAMP NOT NULL,
 					"userId"       TEXT NOT NULL,
 					"userName"     TEXT NOT NULL,
 					"fileName"     TEXT NOT NULL,
 					"fileSize"     INT NOT NULL,
 					"filePath"     TEXT NOT NULL,
-					"timestamp"    TIMESTAMP NOT NULL,
-					CONSTRAINT fk_roomRecord FOREIGN KEY("roomRecordId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."roomRecord"("id") ON DELETE CASCADE,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -2098,6 +2000,7 @@ func (s *RoomMgmtService) start() {
 	router.DELETE("/rooms/:roomid/users/:userid", s.deleteUsersByUserId)
 	router.PUT("/rooms/:roomid/announcements", s.putAnnouncementsByRoomId)
 	router.DELETE("/rooms/:roomid/announcements", s.deleteAnnouncementsByRoomId)
+	router.GET("/rooms/:roomid/chatinfo", s.getRoomsByRoomidChatinfo)
 	router.GET("/rooms/:roomid/chats", s.getRoomsByRoomidChats)
 	router.GET("/rooms/:roomid/chats/:fromindex/:toindex", s.getRoomsByRoomidChatRange)
 

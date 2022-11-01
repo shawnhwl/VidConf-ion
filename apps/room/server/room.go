@@ -1,7 +1,12 @@
 package server
 
 import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -9,6 +14,8 @@ import (
 	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
 	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
 	"github.com/cloudwebrtc/nats-grpc/pkg/rpc/reflection"
+	"github.com/google/uuid"
+	minio "github.com/minio/minio-go/v7"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 
@@ -35,11 +42,20 @@ type natsConf struct {
 }
 
 type PostgresConf struct {
-	Addr           string `mapstructure:"addr"`
-	User           string `mapstructure:"user"`
-	Password       string `mapstructure:"password"`
-	Database       string `mapstructure:"database"`
-	RoomMgmtSchema string `mapstructure:"roomMgmtSchema"`
+	Addr             string `mapstructure:"addr"`
+	User             string `mapstructure:"user"`
+	Password         string `mapstructure:"password"`
+	Database         string `mapstructure:"database"`
+	RoomMgmtSchema   string `mapstructure:"roomMgmtSchema"`
+	RoomRecordSchema string `mapstructure:"roomRecordSchema"`
+}
+
+type MinioConf struct {
+	Endpoint        string `mapstructure:"endpoint"`
+	UseSSL          bool   `mapstructure:"useSSL"`
+	AccessKeyID     string `mapstructure:"username"`
+	SecretAccessKey string `mapstructure:"password"`
+	BucketName      string `mapstructure:"bucketName"`
 }
 
 type RoomMgmtConf struct {
@@ -55,6 +71,7 @@ type Config struct {
 	Nats     natsConf     `mapstructure:"nats"`
 	Redis    db.Config    `mapstructure:"redis"`
 	Postgres PostgresConf `mapstructure:"postgres"`
+	Minio    MinioConf    `mapstructure:"minio"`
 	RoomMgmt RoomMgmtConf `mapstructure:"roommgmt"`
 }
 
@@ -97,11 +114,19 @@ func (c *Config) Load(file string) error {
 // Room represents a Room which manage peers
 type Room struct {
 	sync.RWMutex
-	sid          string
-	peers        map[string]*Peer
-	info         *room.Room
-	update       time.Time
-	redis        *db.Redis
+	sid    string
+	peers  map[string]*Peer
+	info   *room.Room
+	update time.Time
+
+	redis *db.Redis
+
+	postgresDB       *sql.DB
+	roomRecordSchema string
+
+	minioClient *minio.Client
+	bucketName  string
+
 	systemUid    string
 	lenSystemUid int
 }
@@ -158,10 +183,7 @@ func (r *RoomServer) StartGRPC(registrar grpc.ServiceRegistrar) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = nil
-	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid,
-		r.conf.RoomMgmt.ReservedUsernames,
-		r.conf.Redis,
-		r.conf.Postgres)
+	r.RoomService = *NewRoomService(r.conf)
 	log.Infof("NewRoomService r.conf.Redis=%+v r.redis=%+v", r.conf.Redis, r.redis)
 	log.Infof("NewRoomService r.conf.Postgres=%+v r.postgres=%+v", r.conf.Postgres, r.postgresDB)
 	r.RoomSignalService = *NewRoomSignalService(&r.RoomService)
@@ -192,10 +214,7 @@ func (r *RoomServer) Start() error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.NatsConn()
-	r.RoomService = *NewRoomService(r.conf.RoomMgmt.SystemUid,
-		r.conf.RoomMgmt.ReservedUsernames,
-		r.conf.Redis,
-		r.conf.Postgres)
+	r.RoomService = *NewRoomService(r.conf)
 	log.Infof("NewRoomService r.conf.Redis=%+v r.redis=%+v", r.conf.Redis, r.redis)
 	log.Infof("NewRoomService r.conf.Postgres=%+v r.postgres=%+v", r.conf.Postgres, r.postgresDB)
 	r.RoomSignalService = *NewRoomSignalService(&r.RoomService)
@@ -243,12 +262,25 @@ func (s *RoomServer) Close() {
 }
 
 // newRoom creates a new room instance
-func newRoom(sid, systemUid string, redis *db.Redis) *Room {
+func newRoom(sid, systemUid string,
+	redis *db.Redis,
+	postgresDB *sql.DB,
+	roomRecordSchema string,
+	minioClient *minio.Client,
+	bucketName string) *Room {
 	r := &Room{
-		sid:          sid,
-		peers:        make(map[string]*Peer),
-		update:       time.Now(),
-		redis:        redis,
+		sid:    sid,
+		peers:  make(map[string]*Peer),
+		update: time.Now(),
+
+		redis: redis,
+
+		postgresDB:       postgresDB,
+		roomRecordSchema: roomRecordSchema,
+
+		minioClient: minioClient,
+		bucketName:  bucketName,
+
 		systemUid:    systemUid,
 		lenSystemUid: len(systemUid),
 	}
@@ -411,6 +443,7 @@ func (r *Room) sendMessage(msg *room.Message) {
 				},
 			},
 		)
+		go r.insertChats(data)
 		return
 	}
 
@@ -427,4 +460,160 @@ func (r *Room) sendMessage(msg *room.Message) {
 			}
 		}
 	}
+}
+
+type ChatPayload struct {
+	Msg *Payload `json:"msg,omitempty"`
+}
+
+type Payload struct {
+	Uid              *string     `json:"uid,omitempty"`
+	Name             *string     `json:"name,omitempty"`
+	Text             *string     `json:"text,omitempty"`
+	Timestamp        *time.Time  `json:"timestamp,omitempty"`
+	Base64File       *Attachment `json:"base64File,omitempty"`
+	IgnoreByRecorder *bool       `json:"ignoreByRecorder,omitempty"`
+}
+
+type Attachment struct {
+	Name *string `json:"name,omitempty"`
+	Size *int    `json:"size,omitempty"`
+	Data *string `json:"data,omitempty"`
+}
+
+func (r *Room) insertChats(data []byte) {
+	var err error
+	var chatPayload ChatPayload
+	err = json.Unmarshal(data, &chatPayload)
+	if err != nil {
+		log.Errorf("error decoding chat message %s", err.Error())
+		return
+	}
+
+	if chatPayload.Msg.IgnoreByRecorder != nil {
+		log.Infof("not recording this chat message which has IgnoreByRecorder")
+		return
+	}
+	if chatPayload.Msg.Uid == nil {
+		log.Errorf("chat message has no sender id")
+		return
+	}
+	if chatPayload.Msg.Name == nil {
+		log.Errorf("chat message has no sender name")
+		return
+	}
+	if chatPayload.Msg.Timestamp == nil {
+		timeStamp := time.Now()
+		chatPayload.Msg.Timestamp = &timeStamp
+	}
+
+	if chatPayload.Msg.Text != nil {
+		r.insertChatText(chatPayload)
+	} else if chatPayload.Msg.Base64File != nil {
+		r.insertChatFile(chatPayload)
+	} else {
+		jsonStr, _ := json.MarshalIndent(chatPayload, "", "    ")
+		log.Warnf("chat message is on neither text nor file type:\n%s", jsonStr)
+	}
+	data = nil
+}
+
+func (r *Room) insertChatText(chatPayload ChatPayload) {
+	var err error
+	insertStmt := `insert into "` + r.roomRecordSchema + `"."chatMessage"(
+					"id",
+					"roomId",
+					"timestamp",
+					"userId",
+					"userName",
+					"text")
+					values($1, $2, $3, $4, $5, $6)`
+	dbId := uuid.NewString()
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = r.postgresDB.Exec(insertStmt,
+			dbId,
+			r.sid,
+			*chatPayload.Msg.Timestamp,
+			*chatPayload.Msg.Uid,
+			*chatPayload.Msg.Name,
+			*chatPayload.Msg.Text)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			dbId = uuid.NewString()
+		}
+	}
+	if err != nil {
+		log.Errorf("could not insert into database: %s", err)
+	}
+}
+
+func (r *Room) insertChatFile(chatPayload ChatPayload) {
+	var err error
+	if chatPayload.Msg.Base64File.Data == nil {
+		log.Errorf("chat attachment has no data")
+		return
+	}
+	if chatPayload.Msg.Base64File.Name == nil {
+		log.Errorf("chat attachment has no name")
+		return
+	}
+	if chatPayload.Msg.Base64File.Size == nil {
+		log.Errorf("chat attachment has no size")
+		return
+	}
+
+	insertStmt := `insert into "` + r.roomRecordSchema + `"."chatAttachment"(
+					"id",
+					"roomId",
+					"timestamp",
+					"userId",
+					"userName",
+					"fileName",
+					"fileSize",
+					"filePath")
+					values($1, $2, $3, $4, $5, $6, $7, $8)`
+	objName := uuid.NewString()
+	filePath := ATTACHMENT_FOLDERNAME + objName
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = r.postgresDB.Exec(insertStmt,
+			objName,
+			r.sid,
+			*chatPayload.Msg.Timestamp,
+			*chatPayload.Msg.Uid,
+			*chatPayload.Msg.Name,
+			*chatPayload.Msg.Base64File.Name,
+			*chatPayload.Msg.Base64File.Size,
+			filePath)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			objName = uuid.NewString()
+			filePath = ATTACHMENT_FOLDERNAME + objName
+		}
+	}
+	if err != nil {
+		log.Errorf("could not insert into database: %s", err)
+		return
+	}
+
+	data := bytes.NewReader([]byte(*chatPayload.Msg.Base64File.Data))
+	var uploadInfo minio.UploadInfo
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		uploadInfo, err = r.minioClient.PutObject(context.Background(),
+			r.bucketName,
+			r.sid+filePath,
+			data,
+			int64(len(*chatPayload.Msg.Base64File.Data)),
+			minio.PutObjectOptions{ContentType: "application/octet-stream"})
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Errorf("could not upload file: %s", err)
+	}
+	log.Infof("successfully uploaded bytes: ", uploadInfo)
 }

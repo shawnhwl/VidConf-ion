@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	minio "github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	log "github.com/pion/ion-log"
 	room "github.com/pion/ion/apps/room/proto"
 	"github.com/pion/ion/pkg/db"
@@ -23,15 +25,52 @@ var (
 
 type RoomService struct {
 	room.UnimplementedRoomServiceServer
-	roomLock          sync.RWMutex
-	rooms             map[string]*Room
-	closed            chan struct{}
-	redis             *db.Redis
-	postgresDB        *sql.DB
-	roomMgmtSchema    string
+	roomLock sync.RWMutex
+	rooms    map[string]*Room
+	closed   chan struct{}
+
+	redis *db.Redis
+
+	postgresDB       *sql.DB
+	roomMgmtSchema   string
+	roomRecordSchema string
+
+	minioClient *minio.Client
+	bucketName  string
+
 	systemUid         string
 	lenSystemUid      int
 	reservedUsernames []string
+}
+
+func NewRoomService(conf Config) *RoomService {
+	minioClient := getMinioClient(conf)
+	postgresDB := getPostgresDB(conf.Postgres)
+
+	reservedUsernames := make([]string, 0)
+	for id := range conf.RoomMgmt.ReservedUsernames {
+		reservedUsernames = append(reservedUsernames, strings.ToUpper(conf.RoomMgmt.ReservedUsernames[id]))
+	}
+
+	s := &RoomService{
+		rooms:  make(map[string]*Room),
+		closed: make(chan struct{}),
+
+		redis: db.NewRedis(conf.Redis),
+
+		postgresDB:       postgresDB,
+		roomMgmtSchema:   conf.Postgres.RoomMgmtSchema,
+		roomRecordSchema: conf.Postgres.RoomRecordSchema,
+
+		minioClient: minioClient,
+		bucketName:  conf.Minio.BucketName,
+
+		systemUid:         conf.RoomMgmt.SystemUid,
+		lenSystemUid:      len(conf.RoomMgmt.SystemUid),
+		reservedUsernames: reservedUsernames,
+	}
+	go s.stat()
+	return s
 }
 
 func getPostgresDB(conf PostgresConf) *sql.DB {
@@ -50,7 +89,7 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		conf.Database)
 	var postgresDB *sql.DB
 	// postgresDB.Open
-	for retry := 0; retry < DB_RETRY; retry++ {
+	for retry := 0; retry < RETRY_COUNT; retry++ {
 		postgresDB, err = sql.Open("postgres", psqlconn)
 		if err == nil {
 			break
@@ -61,7 +100,7 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		os.Exit(1)
 	}
 	// postgresDB.Ping
-	for retry := 0; retry < DB_RETRY; retry++ {
+	for retry := 0; retry < RETRY_COUNT; retry++ {
 		err = postgresDB.Ping()
 		if err == nil {
 			break
@@ -71,9 +110,9 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		log.Errorf("Unable to ping database: %v\n", err)
 		os.Exit(1)
 	}
-	// create schema
+	// create RoomMgmtSchema schema
 	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + conf.RoomMgmtSchema + `"`
-	for retry := 0; retry < DB_RETRY; retry++ {
+	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
@@ -84,8 +123,7 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		os.Exit(1)
 	}
 	// create table "room"
-	createStmt = `CREATE TABLE IF NOT EXISTS
-					"` + conf.RoomMgmtSchema + `"."room"(
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + conf.RoomMgmtSchema + `"."room"(
 						"id"             UUID PRIMARY KEY,
 						"name"           TEXT NOT NULL,
 						"status"         TEXT NOT NULL,
@@ -97,7 +135,7 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 						"createdAt"      TIMESTAMP NOT NULL,
 						"updatedBy"      TEXT NOT NULL,
 						"updatedAt"      TIMESTAMP NOT NULL)`
-	for retry := 0; retry < DB_RETRY; retry++ {
+	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
@@ -107,31 +145,87 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
+
+	// create RoomRecordSchema schema
+	createStmt = `CREATE SCHEMA IF NOT EXISTS "` + conf.RoomRecordSchema + `"`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
+	// create table "chatMessage"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + conf.RoomRecordSchema + `"."chatMessage"(
+						"id"           UUID PRIMARY KEY,
+						"roomId"       UUID NOT NULL,
+						"timestamp"    TIMESTAMP NOT NULL,
+						"userId"       TEXT NOT NULL,
+						"userName"     TEXT NOT NULL,
+						"text"         TEXT NOT NULL,
+		CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + conf.RoomMgmtSchema + `"."room"("id"))`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
+	// create table "chatAttachment"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + conf.RoomRecordSchema + `"."chatAttachment"(
+		"id"           UUID PRIMARY KEY,
+		"roomId"       UUID NOT NULL,
+		"timestamp"    TIMESTAMP NOT NULL,
+		"userId"       TEXT NOT NULL,
+		"userName"     TEXT NOT NULL,
+		"fileName"     TEXT NOT NULL,
+		"fileSize"     INT NOT NULL,
+		"filePath"     TEXT NOT NULL,
+		CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + conf.RoomMgmtSchema + `"."room"("id"))`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
+
 	return postgresDB
 }
 
-func NewRoomService(systemUid string,
-	reservedUsernames []string,
-	config db.Config,
-	conf PostgresConf) *RoomService {
-
-	postgresDB := getPostgresDB(conf)
-	for id := range reservedUsernames {
-		reservedUsernames[id] = strings.ToUpper(reservedUsernames[id])
+func getMinioClient(config Config) *minio.Client {
+	log.Infof("--- Connecting to MinIO ---")
+	minioClient, err := minio.New(config.Minio.Endpoint, &minio.Options{
+		Creds: credentials.NewStaticV4(config.Minio.AccessKeyID,
+			config.Minio.SecretAccessKey, ""),
+		Secure: config.Minio.UseSSL,
+	})
+	if err != nil {
+		log.Errorf("Unable to connect to filestore: %v\n", err)
+		os.Exit(1)
+	}
+	err = minioClient.MakeBucket(context.Background(),
+		config.Minio.BucketName,
+		minio.MakeBucketOptions{})
+	if err != nil {
+		exists, errBucketExists := minioClient.BucketExists(context.Background(),
+			config.Minio.BucketName)
+		if errBucketExists != nil || !exists {
+			log.Errorf("Unable to create bucket: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	s := &RoomService{
-		rooms:             make(map[string]*Room),
-		closed:            make(chan struct{}),
-		redis:             db.NewRedis(config),
-		postgresDB:        postgresDB,
-		roomMgmtSchema:    conf.RoomMgmtSchema,
-		systemUid:         systemUid,
-		lenSystemUid:      len(systemUid),
-		reservedUsernames: reservedUsernames,
-	}
-	go s.stat()
-	return s
+	return minioClient
 }
 
 func (s *RoomService) Close() {
@@ -583,7 +677,13 @@ func (s *RoomService) createRoom(sid string) *Room {
 	if r := s.rooms[sid]; r != nil {
 		return r
 	}
-	r := newRoom(sid, s.systemUid, s.redis)
+	r := newRoom(sid,
+		s.systemUid,
+		s.redis,
+		s.postgresDB,
+		s.roomRecordSchema,
+		s.minioClient,
+		s.bucketName)
 	s.rooms[sid] = r
 	return r
 }

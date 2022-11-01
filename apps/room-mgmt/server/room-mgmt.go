@@ -45,10 +45,6 @@ type MinioConf struct {
 	BucketName      string `mapstructure:"bucketName"`
 }
 
-type WebAppConf struct {
-	Url string `mapstructure:"url"`
-}
-
 type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
@@ -68,7 +64,6 @@ type Config struct {
 	Nats           NatsConf           `mapstructure:"nats"`
 	Postgres       PostgresConf       `mapstructure:"postgres"`
 	Minio          MinioConf          `mapstructure:"minio"`
-	WebApp         WebAppConf         `mapstructure:"webapp"`
 	Signal         SignalConf         `mapstructure:"signal"`
 	RoomMgmtSentry RoomMgmtSentryConf `mapstructure:"roomsentry"`
 	RoomMgmt       RoomMgmtConf       `mapstructure:"roommgmt"`

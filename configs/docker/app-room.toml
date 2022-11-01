@@ -20,9 +20,17 @@ user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
 roomMgmtSchema = "room-mgmt"
+roomRecordSchema = "room-recorder"
+
+[minio]
+endpoint = "play.min.io"
+useSSL = true
+username = "Q3AM3UQ867SPQQA43P2F"
+password = "zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG"
+bucketName = "vidconf"
 
 [roommgmt]
 # UserId used by system to join the room sessions
-# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml" & "app-room-recorder.toml"
+# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
 system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
 reserved_usernames = ["Public Announcements", "President", "Boss"]
