@@ -21,9 +21,11 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
+	"github.com/pion/ion/pkg/db"
 )
 
 const (
+	NOT_READY          string = "service is not yet ready"
 	MISS_REQUESTOR     string = "missing mandatory field 'requestor'"
 	MISS_START_TIME    string = "missing mandatory field 'startTime' in ISO9601 format"
 	MISS_END_TIME      string = "missing mandatory field 'endTime' in ISO9601 format"
@@ -184,7 +186,7 @@ func (s *RoomMgmtService) getLiveness(c *gin.Context) {
 func (s *RoomMgmtService) getReadiness(c *gin.Context) {
 	log.Infof("GET /readiness")
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, "Not Ready yet")
+		c.String(http.StatusInternalServerError, NOT_READY)
 		return
 	}
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
@@ -192,6 +194,10 @@ func (s *RoomMgmtService) getReadiness(c *gin.Context) {
 
 func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	log.Infof("POST /rooms")
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	var patchRoom PatchRoom
 	if err := c.ShouldBindJSON(&patchRoom); err != nil {
@@ -296,6 +302,10 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 
 func (s *RoomMgmtService) getRooms(c *gin.Context) {
 	log.Infof("GET /rooms")
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	var rooms Rooms
 	rooms.Ids = make(pq.StringArray, 0)
@@ -334,6 +344,10 @@ func (s *RoomMgmtService) getRooms(c *gin.Context) {
 func (s *RoomMgmtService) getRoomsByRoomid(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
@@ -346,6 +360,10 @@ func (s *RoomMgmtService) getRoomsByRoomid(c *gin.Context) {
 func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("PATCH /rooms/%s", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	var patchRoom PatchRoom
 	if err := c.ShouldBindJSON(&patchRoom); err != nil {
@@ -381,6 +399,10 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("DELETE /rooms/%s", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	var deleteRoom DeleteRoom
 	if err := c.ShouldBindJSON(&deleteRoom); err != nil {
@@ -457,6 +479,10 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	userId := c.Param("userid")
 	log.Infof("DELETE /rooms/%s/users/%s", roomId, userId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	var deleteUser DeleteUser
 	if err := c.ShouldBindJSON(&deleteUser); err != nil {
@@ -506,6 +532,10 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("PUT /rooms/%s/announcements", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	var patchRoom PatchRoom
 	if err := c.ShouldBindJSON(&patchRoom); err != nil {
@@ -559,6 +589,10 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("DELETE /rooms/%s/announcements", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	var deleteAnnounce DeleteAnnouncement
 	if err := c.ShouldBindJSON(&deleteAnnounce); err != nil {
@@ -687,6 +721,10 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 func (s *RoomMgmtService) getRoomsByRoomidChatinfo(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/chats", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	getChats, chatPayloads, err := s.getChats(roomId, c)
 	if err != nil {
@@ -699,6 +737,10 @@ func (s *RoomMgmtService) getRoomsByRoomidChatinfo(c *gin.Context) {
 func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/chats", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
 
 	_, chatPayloads, err := s.getChats(roomId, c)
 	if err != nil {
@@ -741,6 +783,11 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 	fromindex := c.Param("fromindex")
 	toindex := c.Param("toindex")
 	log.Infof("GET /rooms/%s/chats/%s/%s", roomId, fromindex, toindex)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
 	fromIndex, err := strconv.Atoi(fromindex)
 	if err != nil {
 		errorString := "integer parameter expected for 'fromindex'"
@@ -1678,6 +1725,41 @@ type RoomMgmtService struct {
 	lenSystemUid int
 }
 
+func NewRoomMgmtService(config Config) *RoomMgmtService {
+	timeLive := time.Now().Format(time.RFC3339)
+	testRedisConnection(config)
+	minioClient := getMinioClient(config)
+	postgresDB := getPostgresDB(config)
+
+	s := &RoomMgmtService{
+		conf: config,
+
+		timeLive:  timeLive,
+		timeReady: time.Now().Format(time.RFC3339),
+
+		postgresDB:       postgresDB,
+		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
+		roomRecordSchema: config.Postgres.RoomRecordSchema,
+
+		minioClient: minioClient,
+		bucketName:  config.Minio.BucketName,
+
+		onChanges:    make(chan string, 2048),
+		systemUid:    config.RoomMgmt.SystemUid,
+		lenSystemUid: len(config.RoomMgmt.SystemUid),
+	}
+
+	go s.start()
+	go s.checkForDBChanges()
+
+	return s
+}
+
+func testRedisConnection(config Config) {
+	redisDb := db.NewRedis(config.Redis)
+	defer redisDb.Close()
+}
+
 func getMinioClient(config Config) *minio.Client {
 	log.Infof("--- Connecting to MinIO ---")
 	minioClient, err := minio.New(config.Minio.Endpoint, &minio.Options{
@@ -1855,36 +1937,6 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 
 	return postgresDB
-}
-
-func NewRoomMgmtService(config Config) *RoomMgmtService {
-	timeLive := time.Now().Format(time.RFC3339)
-	minioClient := getMinioClient(config)
-	postgresDB := getPostgresDB(config)
-
-	s := &RoomMgmtService{
-		conf: config,
-
-		timeLive:  timeLive,
-		timeReady: "",
-
-		postgresDB:       postgresDB,
-		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
-		roomRecordSchema: config.Postgres.RoomRecordSchema,
-
-		minioClient: minioClient,
-		bucketName:  config.Minio.BucketName,
-
-		onChanges:    make(chan string, 2048),
-		systemUid:    config.RoomMgmt.SystemUid,
-		lenSystemUid: len(config.RoomMgmt.SystemUid),
-	}
-
-	s.timeReady = ""
-	go s.start()
-	go s.checkForDBChanges()
-
-	return s
 }
 
 func (s *RoomMgmtService) checkForDBChanges() {

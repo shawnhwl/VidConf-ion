@@ -9,6 +9,11 @@ level = "info"
 [nats]
 url = "nats://nats:4222"
 
+[redis]
+addrs = ["redis:6379"]
+password = ""
+db = 0
+
 [postgres]
 addr = "postgres:5432"
 user = "vidconfAdmin"

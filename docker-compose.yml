@@ -40,6 +40,7 @@ services:
     ports:
       - 5551:5551
     depends_on:
+      - nats
       - islb
     networks:
       - ionnet
@@ -53,10 +54,10 @@ services:
       - "./configs/docker/app-room.toml:/configs/app-room.toml"
     depends_on:
       - nats
-      - redis
-      - postgres
       - islb
       - signal
+      - redis
+      - postgres
     networks:
       - ionnet
 
@@ -72,9 +73,8 @@ services:
       - 7073:7073
     depends_on:
       - nats
+      - islb
       - postgres
-      - signal
-      - app-room
     networks:
       - ionnet
 
@@ -90,10 +90,9 @@ services:
       - 7070:7070
     depends_on:
       - nats
-      - postgres
       - islb
-      - signal
-      - app-room
+      - redis
+      - postgres
       - app-room-sentry
     networks:
       - ionnet

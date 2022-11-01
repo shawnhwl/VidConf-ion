@@ -8,6 +8,7 @@ import (
 	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
+	"github.com/pion/ion/pkg/db"
 	"github.com/pion/ion/pkg/ion"
 	"github.com/pion/ion/pkg/proto"
 	"github.com/pion/ion/pkg/runner"
@@ -62,6 +63,7 @@ type Config struct {
 	Global         GlobalConf         `mapstructure:"global"`
 	Log            LogConf            `mapstructure:"log"`
 	Nats           NatsConf           `mapstructure:"nats"`
+	Redis          db.Config          `mapstructure:"redis"`
 	Postgres       PostgresConf       `mapstructure:"postgres"`
 	Minio          MinioConf          `mapstructure:"minio"`
 	Signal         SignalConf         `mapstructure:"signal"`
