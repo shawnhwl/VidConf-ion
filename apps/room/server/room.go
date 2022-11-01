@@ -397,6 +397,14 @@ func (r *Room) broadcastPeerEvent(event *room.PeerEvent) {
 			return
 		}
 	}
+
+	go r.insertPeerEvent(
+		PeerEvent{
+			time.Now(),
+			event.State,
+			event.Peer.Uid,
+			event.Peer.DisplayName})
+
 	log.Infof("broadcastPeerEvent=%+v", event)
 	peers := r.getPeers()
 	r.update = time.Now()
@@ -434,6 +442,8 @@ func (r *Room) sendMessage(msg *room.Message) {
 		return
 	}
 
+	go r.insertChat(data)
+
 	if to == "all" {
 		r.broadcastRoomEvent(
 			from,
@@ -443,7 +453,6 @@ func (r *Room) sendMessage(msg *room.Message) {
 				},
 			},
 		)
-		go r.insertChats(data)
 		return
 	}
 
@@ -460,6 +469,46 @@ func (r *Room) sendMessage(msg *room.Message) {
 			}
 		}
 	}
+}
+
+type PeerEvent struct {
+	timestamp time.Time
+	state     room.PeerState
+	peerId    string
+	peerName  string
+}
+
+func (r *Room) insertPeerEvent(peerEvent PeerEvent) {
+	var err error
+	insertStmt := `insert into "` + r.roomRecordSchema + `"."peerEvent"(
+					"id",
+					"roomId",
+					"timestamp",
+					"state",
+					"peerId",
+					"peerName")
+					values($1, $2, $3, $4, $5, $6)`
+	dbId := uuid.NewString()
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = r.postgresDB.Exec(insertStmt,
+			dbId,
+			r.sid,
+			peerEvent.timestamp,
+			peerEvent.state,
+			peerEvent.peerId,
+			peerEvent.peerName)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			dbId = uuid.NewString()
+		}
+	}
+	if err != nil {
+		log.Errorf("could not insert into database: %s", err)
+		return
+	}
+	peerEvent = PeerEvent{}
 }
 
 type ChatPayload struct {
@@ -481,7 +530,7 @@ type Attachment struct {
 	Data *string `json:"data,omitempty"`
 }
 
-func (r *Room) insertChats(data []byte) {
+func (r *Room) insertChat(data []byte) {
 	var err error
 	var chatPayload ChatPayload
 	err = json.Unmarshal(data, &chatPayload)

@@ -158,6 +158,25 @@ func getPostgresDB(conf PostgresConf) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
+	// create table "peerEvent"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + conf.RoomRecordSchema + `"."peerEvent"(
+						"id"           UUID PRIMARY KEY,
+						"roomId"       UUID NOT NULL,
+						"timestamp"    TIMESTAMP NOT NULL,
+						"state"        INT NOT NULL,
+						"peerId"       TEXT NOT NULL,
+						"peerName"     TEXT NOT NULL,
+		CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + conf.RoomMgmtSchema + `"."room"("id"))`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
 	// create table "chatMessage"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + conf.RoomRecordSchema + `"."chatMessage"(
 						"id"           UUID PRIMARY KEY,
