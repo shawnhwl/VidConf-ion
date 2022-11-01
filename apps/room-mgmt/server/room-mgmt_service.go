@@ -1727,7 +1727,11 @@ type RoomMgmtService struct {
 
 func NewRoomMgmtService(config Config) *RoomMgmtService {
 	timeLive := time.Now().Format(time.RFC3339)
-	testRedisConnection(config)
+	err := testRedisConnection(config)
+	if err != nil {
+		log.Errorf("redisDB connection error")
+		os.Exit(1)
+	}
 	minioClient := getMinioClient(config)
 	postgresDB := getPostgresDB(config)
 
@@ -1755,9 +1759,27 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	return s
 }
 
-func testRedisConnection(config Config) {
+func testRedisConnection(config Config) error {
 	redisDb := db.NewRedis(config.Redis)
 	defer redisDb.Close()
+	key, value := uuid.NewString(), "value"
+	err := redisDb.Set(key, value, time.Second)
+	if err != nil {
+		return err
+	}
+	res := redisDb.Get(key)
+	if res != value {
+		return errors.New("error")
+	}
+	err = redisDb.Del(key)
+	if err != nil {
+		return err
+	}
+	res = redisDb.Get(key)
+	if res != "" {
+		return errors.New("error")
+	}
+	return nil
 }
 
 func getMinioClient(config Config) *minio.Client {
