@@ -248,8 +248,8 @@ func (s *RoomSentryService) createPlayback(playbackId string) {
 		}
 		return
 	}
-	updateStmt := `update "` + s.roomMgmtSchema + `"."playback"
-					set "endpoint"=$1 where "id"=$2`
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."playback"
+					SET "endpoint"=$1 WHERE "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			s.endpoints[0],
@@ -272,7 +272,7 @@ func (s *RoomSentryService) roomNotFound(roomId string) string {
 
 func (s *RoomSentryService) deletePlayback(playbackId string) {
 	var err error
-	deleteStmt := `delete from "` + s.roomMgmtSchema + `"."playback" where "id"=$1`
+	deleteStmt := `DELETE FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(deleteStmt, playbackId)
 		if err == nil {
@@ -451,9 +451,10 @@ func (s *RoomSentryService) sortTimes() {
 	})
 }
 
-func (s *RoomSentryService) startRoomStatus(roomId string) {
+func (s *RoomSentryService) startRoomStatus(roomId, name string, startTime time.Time) {
+	log.Infof("startRoomStatus: %s", roomId)
 	var err error
-	updateStmt := `update "` + s.roomMgmtSchema + `"."room" set "status"=$1 where "id"=$2`
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room" SET "status"=$1 WHERE "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			ROOM_STARTED,
@@ -465,14 +466,33 @@ func (s *RoomSentryService) startRoomStatus(roomId string) {
 	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
-		return
 	}
-	log.Infof("startRoomStatus: %s", roomId)
+	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."room"(
+					"id",
+					"name",
+					"startTime",
+					"endTime")
+					VALUES($1, $2, $3, $4)`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = s.postgresDB.Exec(insertStmt,
+			roomId,
+			name,
+			startTime,
+			startTime)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("could not insert into database: %s", err)
+	}
 }
 
 func (s *RoomSentryService) endRoomStatus(roomId string) {
+	log.Infof("endRoomStatus: %s", roomId)
 	var err error
-	updateStmt := `update "` + s.roomMgmtSchema + `"."room" set "status"=$1 where "id"=$2`
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room" SET "status"=$1 WHERE "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			ROOM_ENDED,
@@ -484,14 +504,25 @@ func (s *RoomSentryService) endRoomStatus(roomId string) {
 	}
 	if err != nil {
 		log.Errorf("could not update database: %s", err)
-		return
 	}
-	log.Infof("endRoomStatus: %s", roomId)
+	updateStmt = `UPDATE "` + s.roomRecordSchema + `"."room" SET "endTime"=$1 WHERE "id"=$2`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			time.Now(),
+			roomId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("could not update database: %s", err)
+	}
 }
 
 func (s *RoomSentryService) sendAnnouncementStatus(announceId string) {
 	var err error
-	updateStmt := `update "` + s.roomMgmtSchema + `"."announcement" set "status"=$1 where "id"=$2`
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."announcement" SET "status"=$1 WHERE "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			ANNOUNCEMENT_SENT,
@@ -516,7 +547,7 @@ func (s *RoomSentryService) startRooms() {
 		}
 		log.Infof("startRoom %v, %v", key, s.roomStarts[key])
 		go s.createRoom(key, s.roomStarts[key].roomname)
-		go s.startRoomStatus(key)
+		go s.startRoomStatus(key, s.roomStarts[key].roomname, s.roomStarts[key].timeTick)
 		delete(s.roomStarts, key)
 		toDeleteId = append(toDeleteId, id)
 	}

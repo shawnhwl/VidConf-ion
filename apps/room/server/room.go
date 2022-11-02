@@ -484,14 +484,14 @@ func (r *Room) insertPeerEvent(peerEvent PeerEvent) {
 		return
 	}
 	var err error
-	insertStmt := `insert into "` + r.roomRecordSchema + `"."peerEvent"(
+	insertStmt := `INSERT INTO "` + r.roomRecordSchema + `"."peerEvent"(
 					"id",
 					"roomId",
 					"timestamp",
 					"state",
 					"peerId",
 					"peerName")
-					values($1, $2, $3, $4, $5, $6)`
+					VALUES($1, $2, $3, $4, $5, $6)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = r.postgresDB.Exec(insertStmt,
@@ -577,14 +577,14 @@ func (r *Room) insertChat(data []byte) {
 
 func (r *Room) insertChatText(chatPayload ChatPayload) {
 	var err error
-	insertStmt := `insert into "` + r.roomRecordSchema + `"."chatMessage"(
+	insertStmt := `INSERT INTO "` + r.roomRecordSchema + `"."chatMessage"(
 					"id",
 					"roomId",
 					"timestamp",
 					"userId",
 					"userName",
 					"text")
-					values($1, $2, $3, $4, $5, $6)`
+					VALUES($1, $2, $3, $4, $5, $6)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = r.postgresDB.Exec(insertStmt,
@@ -622,7 +622,7 @@ func (r *Room) insertChatFile(chatPayload ChatPayload) {
 		return
 	}
 
-	insertStmt := `insert into "` + r.roomRecordSchema + `"."chatAttachment"(
+	insertStmt := `INSERT INTO "` + r.roomRecordSchema + `"."chatAttachment"(
 					"id",
 					"roomId",
 					"timestamp",
@@ -631,7 +631,7 @@ func (r *Room) insertChatFile(chatPayload ChatPayload) {
 					"fileName",
 					"fileSize",
 					"filePath")
-					values($1, $2, $3, $4, $5, $6, $7, $8)`
+					VALUES($1, $2, $3, $4, $5, $6, $7, $8)`
 	objName := uuid.NewString()
 	filePath := ATTACHMENT_FOLDERNAME + objName
 	for retry := 0; retry < RETRY_COUNT; retry++ {

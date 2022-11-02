@@ -252,7 +252,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	room.createdAt = time.Now()
 	room.updatedBy = *patchRoom.Requestor
 	room.updatedAt = room.createdAt
-	insertStmt := `insert into "` + s.roomMgmtSchema + `"."room"(   "id",
+	insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."room"(   "id",
 																	"name",
 																	"status",
 																	"startTime",
@@ -263,7 +263,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 																	"createdAt",
 																	"updatedBy",
 																	"updatedAt")
-					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			room.id,
@@ -294,7 +294,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 
 	err = s.patchRoom(&room, patchRoom, c)
 	if err != nil {
-		deleteStmt := `delete from "` + s.roomMgmtSchema + `"."room" where "id"=$1`
+		deleteStmt := `DELETE FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 		for retry := 0; retry < RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(deleteStmt, room.id)
 			if err == nil {
@@ -464,11 +464,11 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		room.earlyEndReason = *deleteRoom.Reason
 	}
 
-	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
-					set "updatedBy"=$1,
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room"
+					SET "updatedBy"=$1,
 						"updatedAt"=$2,
 						"endTime"=$3,
-						"earlyEndReason"=$4 where "id"=$5`
+						"earlyEndReason"=$4 WHERE "id"=$5`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
@@ -577,9 +577,9 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
-					set "updatedBy"=$1,
-						"updatedAt"=$2 where "id"=$3`
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room"
+					SET "updatedBy"=$1,
+						"updatedAt"=$2 WHERE "id"=$3`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
@@ -655,7 +655,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	}
 	if isDeleteAll {
 		room.announcements = make([]Announcement, 0)
-		deleteStmt := `delete from "` + s.roomMgmtSchema + `"."announcement" where "roomId"=$1`
+		deleteStmt := `DELETE FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "roomId"=$1`
 		for retry := 0; retry < RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(deleteStmt, room.id)
 			if err == nil {
@@ -693,7 +693,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 				return
 			}
 		}
-		deleteStmt := `delete from "` + s.roomMgmtSchema + `"."announcement" where "id"=$1`
+		deleteStmt := `DELETE FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "id"=$1`
 		for key := range idMap {
 			for retry := 0; retry < RETRY_COUNT; retry++ {
 				_, err = s.postgresDB.Exec(deleteStmt, key)
@@ -712,9 +712,9 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		room.announcements = deleteSlices(room.announcements, toDeleteIds)
 	}
 
-	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
-					set "updatedBy"=$1,
-						"updatedAt"=$2 where "id"=$3`
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room"
+					SET "updatedBy"=$1,
+						"updatedAt"=$2 WHERE "id"=$3`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
@@ -909,16 +909,16 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 		return
 	}
 	var durationInSeconds float64
-	if roomRecord.endTime.After(time.Now()) {
+	if roomRecord.endTime == roomRecord.startTime {
 		durationInSeconds = time.Since((roomRecord.startTime)).Seconds()
 	} else {
 		durationInSeconds = roomRecord.endTime.Sub(roomRecord.startTime).Seconds()
 	}
-	insertStmt := `insert into "` + s.roomMgmtSchema + `"."playback"(   "id",
+	insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."playback"(   "id",
 																		"roomId",
 																		"name",
 																		"endpoint")
-					values($1, $2, $3)`
+					VALUES($1, $2, $3)`
 	playbackId := s.getPlaybackUuid(true)
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name, "")
@@ -1239,13 +1239,13 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		room.allowedUserId = append(room.allowedUserId, patchuser)
 	}
 
-	updateStmt := `update "` + s.roomMgmtSchema + `"."room"
-					set "updatedBy"=$1,
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room"
+					SET "updatedBy"=$1,
 						"updatedAt"=$2,
 						"name"=$3,
 						"startTime"=$4,
 						"endTime"=$5,
-						"allowedUserId"=$6 where "id"=$7`
+						"allowedUserId"=$6 WHERE "id"=$7`
 	var err error
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
@@ -1320,13 +1320,13 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 				room.announcements[id].updatedBy = room.updatedBy
 				room.announcements[id].updatedAt = room.updatedAt
 
-				updateStmt := `update "` + s.roomMgmtSchema + `"."announcement"
-								set "message"=$1,
+				updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."announcement"
+								SET "message"=$1,
 									"relativeFrom"=$2,
 									"relativeTimeInSeconds"=$3,
 									"userId"=$4,
 									"updatedBy"=$5,
-									"updatedAt"=$6 where "id"=$7`
+									"updatedAt"=$6 WHERE "id"=$7`
 				for retry := 0; retry < RETRY_COUNT; retry++ {
 					_, err = s.postgresDB.Exec(updateStmt,
 						room.announcements[id].message,
@@ -1389,7 +1389,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		announcement.updatedAt = room.updatedAt
 		room.announcements = append(room.announcements, announcement)
 
-		insertStmt := `insert into "` + s.roomMgmtSchema + `"."announcement"(   "id", 
+		insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."announcement"(   "id", 
 																				"roomId",
 																				"status",
 																				"message",
@@ -1400,7 +1400,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 																				"createdAt",
 																				"updatedBy",
 																				"updatedAt" )
-						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+						VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		var err error
 		for retry := 0; retry < RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(insertStmt,
@@ -1758,13 +1758,13 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 					return errors.New(errorString)
 				}
 				room.announcements[id] = announcement
-				updateStmt := `update "` + s.roomMgmtSchema + `"."announcement"
-								set "message"=$1,
+				updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."announcement"
+								SET "message"=$1,
 									"relativeFrom"=$2,
 									"relativeTimeInSeconds"=$3,
 									"userId"=$4,
 									"updatedBy"=$5,
-									"updatedAt"=$6 where "id"=$7`
+									"updatedAt"=$6 WHERE "id"=$7`
 				var err error
 				for retry := 0; retry < RETRY_COUNT; retry++ {
 					_, err = s.postgresDB.Exec(updateStmt,
@@ -1795,7 +1795,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 		}
 
 		room.announcements = append(room.announcements, announcement)
-		insertStmt := `insert into "` + s.roomMgmtSchema + `"."announcement"(   "id", 
+		insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."announcement"(   "id", 
 																				"roomId",
 																				"status",
 																				"message",
@@ -1806,7 +1806,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 																				"createdAt",
 																				"updatedBy",
 																				"updatedAt" )
-						values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+						VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		var err error
 		for retry := 0; retry < RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(insertStmt,

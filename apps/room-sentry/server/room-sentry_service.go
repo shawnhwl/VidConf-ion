@@ -62,8 +62,9 @@ type RoomSentryService struct {
 	timeLive  string
 	timeReady string
 
-	postgresDB     *sql.DB
-	roomMgmtSchema string
+	postgresDB       *sql.DB
+	roomMgmtSchema   string
+	roomRecordSchema string
 
 	pollInterval   time.Duration
 	systemUid      string
@@ -142,8 +143,9 @@ func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 		timeLive:  timeLive,
 		timeReady: "",
 
-		postgresDB:     postgresDB,
-		roomMgmtSchema: config.Postgres.RoomMgmtSchema,
+		postgresDB:       postgresDB,
+		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
+		roomRecordSchema: config.Postgres.RoomRecordSchema,
 
 		pollInterval:   time.Duration(config.RoomMgmtSentry.PollInSeconds) * time.Second,
 		systemUid:      config.RoomMgmtSentry.SystemUid,

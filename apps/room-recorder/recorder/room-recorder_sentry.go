@@ -277,13 +277,13 @@ func (s *RoomRecorderService) joinRoom() {
 
 func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 	var err error
-	insertStmt := `insert into "` + s.roomRecordSchema + `"."trackEvent"(
+	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."trackEvent"(
 					"id",
 					"roomId",
 					"timestamp",
 					"state",
 					"peerId")
-					values($1, $2, $3, $4, $5)`
+					VALUES($1, $2, $3, $4, $5)`
 	s.waitUpload.Add(1)
 	defer s.waitUpload.Done()
 	trackEventId := uuid.NewString()
@@ -307,7 +307,7 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 		return
 	}
 
-	insertStmt = `insert into "` + s.roomRecordSchema + `"."trackInfo"(
+	insertStmt = `INSERT INTO "` + s.roomRecordSchema + `"."trackInfo"(
 					"id",
 					"trackEventId",
 					"roomId",
@@ -323,7 +323,7 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 					"width",
 					"height",
 					"frameRate")
-					values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	for _, trackInfo := range trackEvent.tracks {
 		dbId := uuid.NewString()
 		for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -429,12 +429,12 @@ func (s *RoomRecorderService) insertTracksOnInterval(
 func (s *RoomRecorderService) insertOnTracks(onTrack OnTrack) string {
 	var err error
 	trackRemote, _ := json.Marshal(onTrack.trackRemote)
-	insertStmt := `insert into "` + s.roomRecordSchema + `"."onTrack"(
+	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."onTrack"(
 					"id",
 					"roomId",
 					"timestamp",
 					"trackRemote")
-					values($1, $2, $3, $4)`
+					VALUES($1, $2, $3, $4)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
@@ -468,13 +468,13 @@ func (s *RoomRecorderService) insertTracks(
 	s.waitUpload.Add(1)
 	defer s.waitUpload.Done()
 	var err error
-	insertStmt := `insert into "` + s.roomRecordSchema + `"."trackStream"(
+	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."trackStream"(
 					"id",
 					"onTrackId",
 					"roomId",
 					"timestamp",
 					"filePath")
-					values($1, $2, $3, $4, $5)`
+					VALUES($1, $2, $3, $4, $5)`
 	objName := uuid.NewString()
 	filePath := folderName + objName
 	for retry := 0; retry < RETRY_COUNT; retry++ {
