@@ -14,9 +14,10 @@ const (
 	ROOM_BOOKED string = "Booked"
 	ROOM_ENDED  string = "Ended"
 
-	DB_RETRY     int    = 3
-	DUP_PK       string = "duplicate key value violates unique constraint"
-	NOT_FOUND_PK string = "no rows in result set"
+	RETRY_COUNT  int           = 3
+	RETRY_DELAY  time.Duration = 5 * time.Second
+	DUP_PK       string        = "duplicate key value violates unique constraint"
+	NOT_FOUND_PK string        = "no rows in result set"
 )
 
 type Room struct {
@@ -29,32 +30,27 @@ func (s *RoomRecorderService) getRoomsByRoomid(roomId string) Room {
 	var row *sql.Row
 	var room Room
 	var err error
-	for retryDelay := 0; retryDelay < DB_RETRY; retryDelay++ {
-		for retry := 0; retry < DB_RETRY; retry++ {
-			row = s.postgresDB.QueryRow(queryStmt, roomId)
-			if row.Err() == nil {
-				break
-			}
-		}
-		if row.Err() != nil {
-			log.Errorf("could not query database: %s", row.Err().Error())
-			err = row.Err()
-		} else {
-			err = row.Scan(&room.status, &room.startTime)
-			if err != nil {
-				if strings.Contains(err.Error(), NOT_FOUND_PK) {
-					log.Errorf(roomNotFound(roomId))
-					os.Exit(1)
-					return Room{}
-				} else {
-					log.Errorf("could not query database: %s", row.Err().Error())
-				}
-			}
-		}
-		if err == nil {
+	for retry := 0; retry < RETRY_COUNT*RETRY_COUNT; retry++ {
+		row = s.postgresDB.QueryRow(queryStmt, roomId)
+		if row.Err() == nil {
 			break
 		}
-		time.Sleep(5 * time.Minute)
+		time.Sleep(RETRY_DELAY)
+	}
+	if row.Err() != nil {
+		log.Errorf("could not query database: %s", row.Err().Error())
+		err = row.Err()
+	} else {
+		err = row.Scan(&room.status, &room.startTime)
+		if err != nil {
+			if strings.Contains(err.Error(), NOT_FOUND_PK) {
+				log.Errorf(roomNotFound(roomId))
+				os.Exit(1)
+				return Room{}
+			} else {
+				log.Errorf("could not query database: %s", row.Err().Error())
+			}
+		}
 	}
 	if err != nil {
 		log.Errorf("could not proceed with room recording")

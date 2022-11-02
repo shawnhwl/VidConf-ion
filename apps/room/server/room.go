@@ -59,8 +59,9 @@ type MinioConf struct {
 }
 
 type RoomMgmtConf struct {
-	SystemUid         string   `mapstructure:"system_userid"`
 	ReservedUsernames []string `mapstructure:"reserved_usernames"`
+	SystemUid         string   `mapstructure:"system_userid"`
+	PlaybackIdPrefix  string   `mapstructure:"playbackIdPrefix"`
 }
 
 // Config for room node
@@ -479,6 +480,9 @@ type PeerEvent struct {
 }
 
 func (r *Room) insertPeerEvent(peerEvent PeerEvent) {
+	if r.postgresDB == nil || r.minioClient == nil {
+		return
+	}
 	var err error
 	insertStmt := `insert into "` + r.roomRecordSchema + `"."peerEvent"(
 					"id",
@@ -503,6 +507,7 @@ func (r *Room) insertPeerEvent(peerEvent PeerEvent) {
 		if strings.Contains(err.Error(), DUP_PK) {
 			dbId = uuid.NewString()
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not insert into database: %s", err)
@@ -531,6 +536,9 @@ type Attachment struct {
 }
 
 func (r *Room) insertChat(data []byte) {
+	if r.postgresDB == nil || r.minioClient == nil {
+		return
+	}
 	var err error
 	var chatPayload ChatPayload
 	err = json.Unmarshal(data, &chatPayload)
@@ -592,6 +600,7 @@ func (r *Room) insertChatText(chatPayload ChatPayload) {
 		if strings.Contains(err.Error(), DUP_PK) {
 			dbId = uuid.NewString()
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not insert into database: %s", err)
@@ -642,6 +651,7 @@ func (r *Room) insertChatFile(chatPayload ChatPayload) {
 			objName = uuid.NewString()
 			filePath = ATTACHMENT_FOLDERNAME + objName
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not insert into database: %s", err)
@@ -660,6 +670,7 @@ func (r *Room) insertChatFile(chatPayload ChatPayload) {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not upload file: %s", err)

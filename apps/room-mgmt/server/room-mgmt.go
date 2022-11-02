@@ -55,8 +55,9 @@ type RoomMgmtSentryConf struct {
 }
 
 type RoomMgmtConf struct {
-	Addr      string `mapstructure:"address"`
-	SystemUid string `mapstructure:"system_userid"`
+	Addr             string `mapstructure:"address"`
+	SystemUid        string `mapstructure:"system_userid"`
+	PlaybackIdPrefix string `mapstructure:"playbackIdPrefix"`
 }
 
 type Config struct {

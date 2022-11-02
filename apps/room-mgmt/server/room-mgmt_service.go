@@ -43,9 +43,10 @@ const (
 	FROM_START          string = "start"
 	FROM_END            string = "end"
 
-	RETRY_COUNT  int    = 3
-	DUP_PK       string = "duplicate key value violates unique constraint"
-	NOT_FOUND_PK string = "no rows in result set"
+	RETRY_COUNT  int           = 3
+	RETRY_DELAY  time.Duration = 5 * time.Second
+	DUP_PK       string        = "duplicate key value violates unique constraint"
+	NOT_FOUND_PK string        = "no rows in result set"
 
 	RECONNECTION_INTERVAL time.Duration = 10 * time.Second
 )
@@ -147,19 +148,23 @@ type DeleteAnnouncement struct {
 	Id        []string `json:"id"`
 }
 
+type RoomRecord struct {
+	id        string
+	name      string
+	startTime time.Time
+	endTime   time.Time
+}
+
 type GetChats struct {
-	Id        string    `json:"id"`
-	Name      string    `json:"name"`
-	Status    string    `json:"status"`
-	StartTime time.Time `json:"startTime"`
-	ChatCount int       `json:"chatCount"`
+	Id          string    `json:"id"`
+	Name        string    `json:"name"`
+	StartTime   time.Time `json:"startTime"`
+	RecordCount int       `json:"recordCount"`
 }
 
 type GetChatRange struct {
 	Msg ChatPayloads `json:"msg"`
 }
-
-type ChatPayloads []ChatPayload
 
 type ChatPayload struct {
 	Uid        string      `json:"uid"`
@@ -174,6 +179,20 @@ type Attachment struct {
 	Size     int     `json:"size"`
 	Data     string  `json:"data"`
 	FilePath *string `json:"filePath,omitempty"`
+}
+
+type ChatPayloads []ChatPayload
+
+func (p ChatPayloads) Len() int {
+	return len(p)
+}
+
+func (p ChatPayloads) Less(i, j int) bool {
+	return p[i].Timestamp.Before(p[j].Timestamp)
+}
+
+func (p ChatPayloads) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
 }
 
 func (s *RoomMgmtService) getLiveness(c *gin.Context) {
@@ -221,8 +240,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	}
 
 	var room Room
-	roomId := uuid.NewString()
-	room.id = roomId
+	room.id = s.getPlaybackUuid(false)
 	room.name = ""
 	room.status = ROOM_BOOKED
 	room.startTime = *patchRoom.StartTime
@@ -263,9 +281,9 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 			break
 		}
 		if strings.Contains(err.Error(), DUP_PK) {
-			roomId = uuid.NewString()
-			room.id = roomId
+			room.id = s.getPlaybackUuid(false)
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -282,6 +300,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 			if err == nil {
 				break
 			}
+			time.Sleep(RETRY_DELAY)
 		}
 		if err != nil {
 			log.Errorf("could not delete from database: %s", err)
@@ -289,12 +308,12 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		return
 	}
 
-	s.onChanges <- roomId
-	getRoom, err := s.queryGetRoom(roomId, c)
+	s.onRoomChanges <- room.id
+	getRoom, err := s.queryGetRoom(room.id, c)
 	if err != nil {
 		return
 	}
-	log.Infof("posted roomId '%s'", roomId)
+	log.Infof("posted roomId '%s'", room.id)
 	c.JSON(http.StatusOK, getRoom)
 }
 
@@ -315,6 +334,7 @@ func (s *RoomMgmtService) getRooms(c *gin.Context) {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
@@ -385,7 +405,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	s.onChanges <- roomId
+	s.onRoomChanges <- roomId
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -459,6 +479,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -467,7 +488,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		return
 	}
 
-	s.onChanges <- roomId
+	s.onRoomChanges <- roomId
 	log.Infof("deleted roomId '%s'", roomId)
 	remarks := fmt.Sprintf("Ending roomId '%s' in %d minutes", roomId, timeLeftInSeconds/60)
 	c.JSON(http.StatusOK, map[string]interface{}{"remarks": remarks})
@@ -567,6 +588,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -575,7 +597,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	s.onChanges <- roomId
+	s.onRoomChanges <- roomId
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -639,6 +661,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 			if err == nil {
 				break
 			}
+			time.Sleep(RETRY_DELAY)
 		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not delete from database: %s", err)
@@ -677,6 +700,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 				if err == nil {
 					break
 				}
+				time.Sleep(RETRY_DELAY)
 			}
 			if err != nil {
 				errorString := fmt.Sprintf("could not delete from database: %s", err)
@@ -699,6 +723,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -707,7 +732,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	s.onChanges <- roomId
+	s.onRoomChanges <- roomId
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -716,6 +741,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	c.JSON(http.StatusOK, getRoom)
 }
 
+// chat history retrieval
 func (s *RoomMgmtService) getRoomsByRoomidChatinfo(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/chats", roomId)
@@ -724,11 +750,15 @@ func (s *RoomMgmtService) getRoomsByRoomidChatinfo(c *gin.Context) {
 		return
 	}
 
-	getChats, chatPayloads, err := s.getChats(roomId, c)
+	playback, chatPayloads, err := s.getChats(roomId, c)
 	if err != nil {
 		return
 	}
-	getChats.ChatCount = len(chatPayloads)
+	var getChats GetChats
+	getChats.Id = playback.id
+	getChats.Name = playback.name
+	getChats.StartTime = playback.startTime
+	getChats.RecordCount = len(chatPayloads)
 	c.JSON(http.StatusOK, getChats)
 }
 
@@ -857,16 +887,163 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 	c.JSON(http.StatusOK, getChatRange)
 }
 
-func (p ChatPayloads) Len() int {
-	return len(p)
+// playback
+func (s *RoomMgmtService) postPlayback(c *gin.Context) {
+	roomId := c.Param("roomid")
+	log.Infof("POST /playback/rooms/%s", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	roomRecord, err := s.queryRoomRecord(roomId)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			log.Warnf(s.roomNotFound(roomId))
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotFound(roomId)})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+	var durationInSeconds float64
+	if roomRecord.endTime.After(time.Now()) {
+		durationInSeconds = time.Since((roomRecord.startTime)).Seconds()
+	} else {
+		durationInSeconds = roomRecord.endTime.Sub(roomRecord.startTime).Seconds()
+	}
+	insertStmt := `insert into "` + s.roomMgmtSchema + `"."playback"(   "id",
+																		"roomId",
+																		"name",
+																		"endpoint")
+					values($1, $2, $3)`
+	playbackId := s.getPlaybackUuid(true)
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name, "")
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			playbackId = s.getPlaybackUuid(true)
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		errorString := fmt.Sprintf("could not insert into database: %s", err)
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+	s.onPlaybackCreate <- playbackId
+	c.JSON(http.StatusOK, map[string]interface{}{"id": playbackId, "durationInSeconds": durationInSeconds})
 }
 
-func (p ChatPayloads) Less(i, j int) bool {
-	return p[i].Timestamp.Before(p[j].Timestamp)
+func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
+	playbackId := c.Param("playbackid")
+	log.Infof("POST /playback/%s/play", playbackId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	endpoint, err := s.queryPlayback(playbackId, c)
+	if err != nil {
+		return
+	}
+	s.onPlaybackCtrl <- endpoint + "/play"
+	c.Status(http.StatusOK)
 }
 
-func (p ChatPayloads) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
+func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
+	playbackId := c.Param("playbackid")
+	secondsFromStart := c.Param("secondsfromstart")
+	log.Infof("POST /playback/%s/play/%s", playbackId, secondsFromStart)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+	_, err := strconv.Atoi(secondsFromStart)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-integer skip interval"})
+		return
+	}
+	endpoint, err := s.queryPlayback(playbackId, c)
+	if err != nil {
+		return
+	}
+	s.onPlaybackCtrl <- endpoint + "/playFrom/" + secondsFromStart
+	c.Status(http.StatusOK)
+}
+
+func (s *RoomMgmtService) postPlaybackPause(c *gin.Context) {
+	playbackId := c.Param("playbackid")
+	log.Infof("POST /playback/%s/pause", playbackId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	endpoint, err := s.queryPlayback(playbackId, c)
+	if err != nil {
+		return
+	}
+	s.onPlaybackCtrl <- endpoint + "/pause"
+	c.Status(http.StatusOK)
+}
+
+func (s *RoomMgmtService) deletePlayback(c *gin.Context) {
+	playbackId := c.Param("playbackid")
+	log.Infof("DELETE /playback/%s", playbackId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	queryStmt := `SELECT "id" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
+	var row *sql.Row
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		row = s.postgresDB.QueryRow(queryStmt, playbackId)
+		if row.Err() == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if row.Err() != nil {
+		errorString := fmt.Sprintf("could not query database: %s", row.Err())
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+	var id string
+	err := row.Scan(&id)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			errorString := s.roomNotFound(playbackId)
+			log.Warnf(errorString)
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err)
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+	s.onPlaybackDelete <- playbackId
+	c.Status(http.StatusOK)
+}
+
+func (s *RoomMgmtService) getPlaybackUuid(isPlayback bool) string {
+	id := uuid.NewString()
+	if isPlayback {
+		id = s.playbackIdPrefix + id[len(s.playbackIdPrefix):]
+	} else {
+		if id[:len(s.playbackIdPrefix)] == s.playbackIdPrefix {
+			return s.getPlaybackUuid(isPlayback)
+		}
+	}
+	return id
 }
 
 func (s *RoomMgmtService) roomNotFound(roomId string) string {
@@ -881,8 +1058,8 @@ func (s *RoomMgmtService) roomHasEnded(roomId string) string {
 	return "RoomId '" + roomId + "' session has ended"
 }
 
-func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, ChatPayloads, error) {
-	getChats, err := s.queryChats(roomId)
+func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, ChatPayloads, error) {
+	roomRecord, err := s.queryRoomRecord(roomId)
 	if err != nil {
 		if strings.Contains(err.Error(), NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
@@ -892,12 +1069,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		}
-		return GetChats{}, ChatPayloads{}, err
-	}
-	if getChats.Status == ROOM_BOOKED {
-		log.Warnf(s.roomNotStarted(roomId))
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotStarted(roomId)})
-		return GetChats{}, ChatPayloads{}, errors.New(s.roomNotStarted(roomId))
+		return RoomRecord{}, ChatPayloads{}, err
 	}
 
 	chats := make(ChatPayloads, 0)
@@ -912,12 +1084,13 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
 		log.Errorf(errorString)
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return GetChats{}, ChatPayloads{}, err
+		return RoomRecord{}, ChatPayloads{}, err
 	}
 	defer chatrows.Close()
 	for chatrows.Next() {
@@ -931,7 +1104,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 			errorString := fmt.Sprintf("could not query database: %s", err)
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-			return GetChats{}, ChatPayloads{}, err
+			return RoomRecord{}, ChatPayloads{}, err
 		}
 		chat.Text = &text
 		chats = append(chats, chat)
@@ -952,12 +1125,13 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
 		log.Errorf(errorString)
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return GetChats{}, ChatPayloads{}, err
+		return RoomRecord{}, ChatPayloads{}, err
 	}
 	defer attachmentrows.Close()
 	for attachmentrows.Next() {
@@ -974,7 +1148,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 			errorString := fmt.Sprintf("could not query database: %s", err)
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-			return GetChats{}, ChatPayloads{}, err
+			return RoomRecord{}, ChatPayloads{}, err
 		}
 		fileinfo.FilePath = &filePath
 		attachment.Base64File = &fileinfo
@@ -983,7 +1157,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (GetChats, Cha
 	sort.Sort(attachments)
 
 	chats = append(chats, attachments...)
-	return getChats, chats, nil
+	return roomRecord, chats, nil
 }
 
 func (s *RoomMgmtService) getEditableRoom(roomId string, c *gin.Context) (Room, error) {
@@ -1085,6 +1259,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -1164,6 +1339,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 					if err == nil {
 						break
 					}
+					time.Sleep(RETRY_DELAY)
 				}
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
@@ -1245,6 +1421,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 			if strings.Contains(err.Error(), DUP_PK) {
 				break
 			}
+			time.Sleep(RETRY_DELAY)
 		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -1270,21 +1447,22 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 							"updatedBy",
 							"updatedAt"
 					FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
-	var rows *sql.Row
+	var row *sql.Row
 	for retry := 0; retry < RETRY_COUNT; retry++ {
-		rows = s.postgresDB.QueryRow(queryStmt, roomId)
-		if rows.Err() == nil {
+		row = s.postgresDB.QueryRow(queryStmt, roomId)
+		if row.Err() == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
-	if rows.Err() != nil {
-		errorString := fmt.Sprintf("could not query database: %s", rows.Err())
+	if row.Err() != nil {
+		errorString := fmt.Sprintf("could not query database: %s", row.Err())
 		log.Errorf(errorString)
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return GetRoom{}, rows.Err()
+		return GetRoom{}, row.Err()
 	}
 	var getRoom GetRoom
-	err := rows.Scan(&getRoom.Id,
+	err := row.Scan(&getRoom.Id,
 		&getRoom.Name,
 		&getRoom.Status,
 		&getRoom.StartTime,
@@ -1325,6 +1503,7 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
@@ -1378,6 +1557,7 @@ func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
 		if rows.Err() == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if rows.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", rows.Err())
@@ -1418,6 +1598,7 @@ func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		return Room{}, err
@@ -1444,33 +1625,73 @@ func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
 	return room, nil
 }
 
-func (s *RoomMgmtService) queryChats(roomId string) (GetChats, error) {
+func (s *RoomMgmtService) queryRoomRecord(roomId string) (RoomRecord, error) {
 	queryStmt := `SELECT    "id",
 							"name",
-							"status",
-							"startTime"
-					FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
+							"startTime",
+							"endTime"
+					FROM "` + s.roomRecordSchema + `"."room" WHERE "id"=$1`
 	var row *sql.Row
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, roomId)
 		if row.Err() == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if row.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
 		log.Errorf(errorString)
-		return GetChats{}, row.Err()
+		return RoomRecord{}, row.Err()
 	}
-	var getChats GetChats
-	err := row.Scan(&getChats.Id,
-		&getChats.Name,
-		&getChats.Status,
-		&getChats.StartTime)
+	var roomRecord RoomRecord
+	err := row.Scan(&roomRecord.id,
+		&roomRecord.name,
+		&roomRecord.startTime,
+		&roomRecord.endTime)
 	if err != nil {
-		return GetChats{}, err
+		return RoomRecord{}, err
 	}
-	return getChats, nil
+	return roomRecord, nil
+}
+
+func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) (string, error) {
+	queryStmt := `SELECT "endpoint" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
+	var row *sql.Row
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		row = s.postgresDB.QueryRow(queryStmt, playbackId)
+		if row.Err() == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if row.Err() != nil {
+		errorString := fmt.Sprintf("could not query database: %s", row.Err())
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return "", row.Err()
+	}
+	var endpoint string
+	err := row.Scan(&endpoint)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			errorString := s.roomNotFound(playbackId)
+			log.Warnf(errorString)
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err)
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return "", err
+	}
+	if endpoint == "" {
+		errorString := "playback is not yet ready"
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return "", err
+	}
+	return endpoint, nil
 }
 
 func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gin.Context) error {
@@ -1557,6 +1778,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 					if err == nil {
 						break
 					}
+					time.Sleep(RETRY_DELAY)
 				}
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
@@ -1605,6 +1827,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 			if strings.Contains(err.Error(), DUP_PK) {
 				break
 			}
+			time.Sleep(RETRY_DELAY)
 		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -1708,6 +1931,11 @@ func (s *RoomMgmtService) closeRoomService(sdkConnector *sdk.Connector, roomServ
 type RoomMgmtService struct {
 	conf Config
 
+	onRoomChanges    chan string
+	onPlaybackCreate chan string
+	onPlaybackDelete chan string
+	onPlaybackCtrl   chan string
+
 	timeLive  string
 	timeReady string
 
@@ -1718,9 +1946,9 @@ type RoomMgmtService struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	onChanges    chan string
-	systemUid    string
-	lenSystemUid int
+	systemUid        string
+	lenSystemUid     int
+	playbackIdPrefix string
 }
 
 func NewRoomMgmtService(config Config) *RoomMgmtService {
@@ -1736,6 +1964,11 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	s := &RoomMgmtService{
 		conf: config,
 
+		onRoomChanges:    make(chan string, 2048),
+		onPlaybackCreate: make(chan string, 2048),
+		onPlaybackDelete: make(chan string, 2048),
+		onPlaybackCtrl:   make(chan string, 2048),
+
 		timeLive:  timeLive,
 		timeReady: time.Now().Format(time.RFC3339),
 
@@ -1746,13 +1979,13 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		onChanges:    make(chan string, 2048),
-		systemUid:    config.RoomMgmt.SystemUid,
-		lenSystemUid: len(config.RoomMgmt.SystemUid),
+		systemUid:        config.RoomMgmt.SystemUid,
+		lenSystemUid:     len(config.RoomMgmt.SystemUid),
+		playbackIdPrefix: config.RoomMgmt.PlaybackIdPrefix,
 	}
 
 	go s.start()
-	go s.checkForDBChanges()
+	go s.checkForRemoteCtrl()
 
 	return s
 }
@@ -1827,6 +2060,7 @@ func getPostgresDB(config Config) *sql.DB {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to connect to database: %v\n", err)
@@ -1838,6 +2072,7 @@ func getPostgresDB(config Config) *sql.DB {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to ping database: %v\n", err)
@@ -1850,6 +2085,7 @@ func getPostgresDB(config Config) *sql.DB {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
@@ -1873,6 +2109,7 @@ func getPostgresDB(config Config) *sql.DB {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
@@ -1897,6 +2134,7 @@ func getPostgresDB(config Config) *sql.DB {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
@@ -1910,6 +2148,25 @@ func getPostgresDB(config Config) *sql.DB {
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
+	// create table "room"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."room"(
+					"id"        UUID PRIMARY KEY,
+					"name"      TEXT NOT NULL,
+					"startTime" TIMESTAMP NOT NULL,
+					"endTime"   TIMESTAMP NOT NULL,
+					CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
@@ -1923,12 +2180,13 @@ func getPostgresDB(config Config) *sql.DB {
 					"userId"       TEXT NOT NULL,
 					"userName"     TEXT NOT NULL,
 					"text"         TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
@@ -1944,12 +2202,31 @@ func getPostgresDB(config Config) *sql.DB {
 					"fileName"     TEXT NOT NULL,
 					"fileSize"     INT NOT NULL,
 					"filePath"     TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
+	// create table "playback"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."playback"(
+					"id"       UUID PRIMARY KEY,
+					"roomId"   UUID NOT NULL,
+					"name"     TEXT NOT NULL,
+					"endpoint" TEXT NOT NULL,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id"))`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
@@ -1959,25 +2236,56 @@ func getPostgresDB(config Config) *sql.DB {
 	return postgresDB
 }
 
-func (s *RoomMgmtService) checkForDBChanges() {
+func (s *RoomMgmtService) checkForRemoteCtrl() {
 	for {
-		roomId := <-s.onChanges
-		log.Infof("changes to roomid '%s'", roomId)
-		requestURL := s.conf.RoomMgmtSentry.Url + "/rooms/" + roomId
-		var err error
-		var response *http.Response
-		for retry := 0; retry < RETRY_COUNT; retry++ {
-			response, err = http.Get(requestURL)
-			if err == nil && response.StatusCode == http.StatusOK {
-				break
-			}
-		}
-		if err != nil {
-			log.Errorf("error sending changes to room-sentry: %v", err)
-		} else if response.StatusCode != http.StatusOK {
-			log.Errorf("error sending changes to room-sentry: %v", response.StatusCode)
+		select {
+		case roomId := <-s.onRoomChanges:
+			log.Infof("changes to roomid '%s'", roomId)
+			requestURL := s.conf.RoomMgmtSentry.Url + "/rooms/" + roomId
+			go s.httpPost(requestURL)
+		case playbackId := <-s.onPlaybackCreate:
+			log.Infof("playbackid '%s' created", playbackId)
+			requestURL := s.conf.RoomMgmtSentry.Url + "/playback/" + playbackId
+			go s.httpPost(requestURL)
+		case playbackId := <-s.onPlaybackDelete:
+			log.Infof("playbackid '%s' deleted", playbackId)
+			requestURL := s.conf.RoomMgmtSentry.Url + "/delete/playback/" + playbackId
+			go s.httpPost(requestURL)
+		case ctrlUrl := <-s.onPlaybackCtrl:
+			log.Infof("playback cmd: %s", ctrlUrl)
+			go s.httpPost(ctrlUrl)
 		}
 	}
+}
+
+func (s *RoomMgmtService) httpPost(requestURL string) {
+	request, err := http.NewRequest(http.MethodPost, requestURL, nil)
+	if err != nil {
+		log.Errorf("error sending http.POST to room-sentry: %v", err)
+		return
+	}
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		err = s.httpClient(request)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("error sending http.POST to room-sentry: %v", err)
+	}
+}
+
+func (s *RoomMgmtService) httpClient(request *http.Request) error {
+	var response *http.Response
+	client := &http.Client{}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	} else if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("response.StatusCode=%v", response.StatusCode)
+	}
+	return nil
 }
 
 func (s *RoomMgmtService) start() {
@@ -1995,9 +2303,16 @@ func (s *RoomMgmtService) start() {
 	router.DELETE("/rooms/:roomid/users/:userid", s.deleteUsersByUserId)
 	router.PUT("/rooms/:roomid/announcements", s.putAnnouncementsByRoomId)
 	router.DELETE("/rooms/:roomid/announcements", s.deleteAnnouncementsByRoomId)
+	// chat history retrieval
 	router.GET("/rooms/:roomid/chatinfo", s.getRoomsByRoomidChatinfo)
 	router.GET("/rooms/:roomid/chats", s.getRoomsByRoomidChats)
 	router.GET("/rooms/:roomid/chats/:fromindex/:toindex", s.getRoomsByRoomidChatRange)
+	// playback
+	router.POST("/playback/rooms/:roomid", s.postPlayback)
+	router.POST("/playback/:playbackid/play", s.postPlaybackPlay)
+	router.POST("/playback/:playbackid/play/:secondsfromstart", s.postPlaybackPlayfrom)
+	router.POST("/playback/:playbackid/pause", s.postPlaybackPause)
+	router.DELETE("/playback/:playbackid", s.deletePlayback)
 
 	log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
 	log.Errorf("%s", router.Run(s.conf.RoomMgmt.Addr))

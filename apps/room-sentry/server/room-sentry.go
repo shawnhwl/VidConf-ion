@@ -42,10 +42,11 @@ type SignalConf struct {
 }
 
 type RoomMgmtSentryConf struct {
-	PollInSeconds  int    `mapstructure:"pollInSeconds"`
-	Addr           string `mapstructure:"address"`
-	SystemUid      string `mapstructure:"system_userid"`
-	SystemUsername string `mapstructure:"system_username"`
+	PollInSeconds  int      `mapstructure:"pollInSeconds"`
+	Addr           string   `mapstructure:"address"`
+	SystemUid      string   `mapstructure:"system_userid"`
+	SystemUsername string   `mapstructure:"system_username"`
+	Endpoints      []string `mapstructure:"endpoints"`
 }
 
 type Config struct {

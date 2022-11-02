@@ -15,6 +15,7 @@ user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
 roomMgmtSchema = "room-mgmt"
+roomRecordSchema = "room-recorder"
 
 [signal]
 # The addr for grpc signalling
@@ -29,3 +30,5 @@ address = "0.0.0.0:7073"
 # Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
 system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
 system_username = "Public Announcements"
+# endpoint pool for spinning of room-recorder and playback
+endpoints = ["http://localhost:7083"]

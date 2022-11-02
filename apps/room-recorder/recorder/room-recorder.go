@@ -39,15 +39,11 @@ type PostgresConf struct {
 }
 
 type MinioConf struct {
-	Endpoint             string `mapstructure:"endpoint"`
-	UseSSL               bool   `mapstructure:"useSSL"`
-	AccessKeyID          string `mapstructure:"username"`
-	SecretAccessKey      string `mapstructure:"password"`
-	BucketName           string `mapstructure:"bucketName"`
-	FolderName           string `mapstructure:"folderName"`
-	AttachmentFolderName string `mapstructure:"attachmentFolderName"`
-	VideoFolderName      string `mapstructure:"videoFolderName"`
-	AudioFolderName      string `mapstructure:"audioFolderName"`
+	Endpoint        string `mapstructure:"endpoint"`
+	UseSSL          bool   `mapstructure:"useSSL"`
+	AccessKeyID     string `mapstructure:"username"`
+	SecretAccessKey string `mapstructure:"password"`
+	BucketName      string `mapstructure:"bucketName"`
 }
 
 type SignalConf struct {
@@ -193,7 +189,6 @@ func (s *RoomRecorder) Close() {
 
 func (s *RoomRecorder) FinalizeRoomRecord() {
 	close(s.runningCh)
-	s.RoomRecorderService.UpdateRoomRecord()
 	time.Sleep(time.Second)
 	s.waitUpload.Wait()
 }
