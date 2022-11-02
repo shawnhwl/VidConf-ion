@@ -43,7 +43,7 @@ type RoomRecorderService struct {
 	quitCh         chan os.Signal
 	joinRoomCh     chan bool
 	isSdkConnected bool
-	runningCh      chan bool
+	runningCh      chan struct{}
 	waitUpload     *sync.WaitGroup
 
 	timeLive  string
@@ -75,7 +75,7 @@ func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderS
 		quitCh:         quitCh,
 		joinRoomCh:     make(chan bool, 32),
 		isSdkConnected: true,
-		runningCh:      make(chan bool),
+		runningCh:      make(chan struct{}),
 		waitUpload:     new(sync.WaitGroup),
 
 		timeLive:  timeLive,
@@ -92,9 +92,9 @@ func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderS
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		roomId:         config.Recorder.Roomid,
+		roomId:         config.Recorder.RoomId,
 		chopInterval:   time.Duration(config.Recorder.ChoppedInSeconds) * time.Second,
-		systemUid:      config.Recorder.SystemUid,
+		systemUid:      config.Recorder.SystemUserId,
 		systemUsername: config.Recorder.SystemUsername,
 	}
 	s.getRoomInfo()

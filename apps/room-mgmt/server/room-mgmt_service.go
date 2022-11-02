@@ -775,7 +775,6 @@ func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
 		return
 	}
 
-	sort.Sort(chatPayloads)
 	var getChatRange GetChatRange
 	getChatRange.Msg = chatPayloads
 	for id := range getChatRange.Msg {
@@ -855,7 +854,6 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 		toIndex = count - 1
 	}
 
-	sort.Sort(chatPayloads)
 	var getChatRange GetChatRange
 	getChatRange.Msg = make([]ChatPayload, 0)
 	for id := fromIndex; id <= toIndex; id++ {
@@ -952,7 +950,13 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	s.onPlaybackCtrl <- endpoint + "/play"
+
+	err = s.httpPost(endpoint + "/play")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -964,6 +968,7 @@ func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
 		return
 	}
+
 	_, err := strconv.Atoi(secondsFromStart)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-integer skip interval"})
@@ -973,7 +978,13 @@ func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	s.onPlaybackCtrl <- endpoint + "/playFrom/" + secondsFromStart
+
+	err = s.httpPost(endpoint + "/play/" + secondsFromStart)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -989,7 +1000,13 @@ func (s *RoomMgmtService) postPlaybackPause(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	s.onPlaybackCtrl <- endpoint + "/pause"
+
+	err = s.httpPost(endpoint + "/pause")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -1109,7 +1126,6 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 		chat.Text = &text
 		chats = append(chats, chat)
 	}
-	sort.Sort(chats)
 
 	attachments := make(ChatPayloads, 0)
 	var attachmentrows *sql.Rows
@@ -1154,9 +1170,9 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 		attachment.Base64File = &fileinfo
 		attachments = append(attachments, attachment)
 	}
-	sort.Sort(attachments)
 
 	chats = append(chats, attachments...)
+	sort.Sort(chats)
 	return roomRecord, chats, nil
 }
 
@@ -1867,8 +1883,8 @@ func (s *RoomMgmtService) getPeers(roomId string) []User {
 
 	users := make([]User, 0)
 	for _, peer := range peers {
-		if len(peer.Uid) >= s.lenSystemUid {
-			if peer.Uid[:s.lenSystemUid] == s.systemUid {
+		if len(peer.Uid) >= s.lenSystemUserId {
+			if peer.Uid[:s.lenSystemUserId] == s.systemUserId {
 				continue
 			}
 		}
@@ -1919,7 +1935,6 @@ func (s *RoomMgmtService) getRoomService(signalAddr string) (*sdk.Connector, *sd
 
 func (s *RoomMgmtService) closeRoomService(sdkConnector *sdk.Connector, roomService *sdk.Room) {
 	if roomService != nil {
-		roomService.Leave(s.systemUid, s.systemUid)
 		roomService.Close()
 		roomService = nil
 	}
@@ -1934,7 +1949,6 @@ type RoomMgmtService struct {
 	onRoomChanges    chan string
 	onPlaybackCreate chan string
 	onPlaybackDelete chan string
-	onPlaybackCtrl   chan string
 
 	timeLive  string
 	timeReady string
@@ -1946,8 +1960,8 @@ type RoomMgmtService struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	systemUid        string
-	lenSystemUid     int
+	systemUserId     string
+	lenSystemUserId  int
 	playbackIdPrefix string
 }
 
@@ -1967,7 +1981,6 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		onRoomChanges:    make(chan string, 2048),
 		onPlaybackCreate: make(chan string, 2048),
 		onPlaybackDelete: make(chan string, 2048),
-		onPlaybackCtrl:   make(chan string, 2048),
 
 		timeLive:  timeLive,
 		timeReady: time.Now().Format(time.RFC3339),
@@ -1979,8 +1992,8 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		systemUid:        config.RoomMgmt.SystemUid,
-		lenSystemUid:     len(config.RoomMgmt.SystemUid),
+		systemUserId:     config.RoomMgmt.SystemUserId,
+		lenSystemUserId:  len(config.RoomMgmt.SystemUserId),
 		playbackIdPrefix: config.RoomMgmt.PlaybackIdPrefix,
 	}
 
@@ -2241,28 +2254,25 @@ func (s *RoomMgmtService) checkForRemoteCtrl() {
 		select {
 		case roomId := <-s.onRoomChanges:
 			log.Infof("changes to roomid '%s'", roomId)
-			requestURL := s.conf.RoomMgmtSentry.Url + "/rooms/" + roomId
+			requestURL := s.conf.RoomSentry.Url + "/rooms/" + roomId
 			go s.httpPost(requestURL)
 		case playbackId := <-s.onPlaybackCreate:
 			log.Infof("playbackid '%s' created", playbackId)
-			requestURL := s.conf.RoomMgmtSentry.Url + "/playback/" + playbackId
+			requestURL := s.conf.RoomSentry.Url + "/playback/" + playbackId
 			go s.httpPost(requestURL)
 		case playbackId := <-s.onPlaybackDelete:
 			log.Infof("playbackid '%s' deleted", playbackId)
-			requestURL := s.conf.RoomMgmtSentry.Url + "/delete/playback/" + playbackId
+			requestURL := s.conf.RoomSentry.Url + "/delete/playback/" + playbackId
 			go s.httpPost(requestURL)
-		case ctrlUrl := <-s.onPlaybackCtrl:
-			log.Infof("playback cmd: %s", ctrlUrl)
-			go s.httpPost(ctrlUrl)
 		}
 	}
 }
 
-func (s *RoomMgmtService) httpPost(requestURL string) {
+func (s *RoomMgmtService) httpPost(requestURL string) error {
 	request, err := http.NewRequest(http.MethodPost, requestURL, nil)
 	if err != nil {
-		log.Errorf("error sending http.POST to room-sentry: %v", err)
-		return
+		log.Errorf("error sending http.POST: %v", err)
+		return err
 	}
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		err = s.httpClient(request)
@@ -2272,8 +2282,10 @@ func (s *RoomMgmtService) httpPost(requestURL string) {
 		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("error sending http.POST to room-sentry: %v", err)
+		log.Errorf("error sending http.POST: %v", err)
+		return err
 	}
+	return nil
 }
 
 func (s *RoomMgmtService) httpClient(request *http.Request) error {

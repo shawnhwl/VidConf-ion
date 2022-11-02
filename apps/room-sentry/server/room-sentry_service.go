@@ -147,10 +147,10 @@ func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
 		roomRecordSchema: config.Postgres.RoomRecordSchema,
 
-		pollInterval:   time.Duration(config.RoomMgmtSentry.PollInSeconds) * time.Second,
-		systemUid:      config.RoomMgmtSentry.SystemUid,
-		systemUsername: config.RoomMgmtSentry.SystemUsername,
-		endpoints:      config.RoomMgmtSentry.Endpoints,
+		pollInterval:   time.Duration(config.RoomSentry.PollInSeconds) * time.Second,
+		systemUid:      config.RoomSentry.SystemUserId,
+		systemUsername: config.RoomSentry.SystemUsername,
+		endpoints:      config.RoomSentry.Endpoints,
 
 		roomStarts:       make(map[string]StartRooms),
 		roomStartKeys:    make([]string, 0),
@@ -334,7 +334,7 @@ func (s *RoomSentryService) start() {
 	router.POST("/playback/:playbackid", s.getPlaybackid)
 	router.POST("/delete/playback/:playbackid", s.deletePlaybackid)
 
-	log.Infof("HTTP service starting at %s", s.conf.RoomMgmtSentry.Addr)
-	log.Errorf("%s", router.Run(s.conf.RoomMgmtSentry.Addr))
+	log.Infof("HTTP service starting at %s", s.conf.RoomSentry.Addr)
+	log.Errorf("%s", router.Run(s.conf.RoomSentry.Addr))
 	os.Exit(1)
 }

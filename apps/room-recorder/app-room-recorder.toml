@@ -32,10 +32,10 @@ addr = "localhost:5551"
 # The address the monitoring server will listen on.
 addr = "0.0.0.0:7081"
 # Roomid to record session
-roomid = "8b99c565-8837-4d38-8820-02ad021deb96"
+roomid = "bddc3037-be36-446e-a18b-f537307deecd"
 # time in seconds per chopped section
 choppedInSeconds = 500000
 # UserId and UserName used by system to join the room sessions
 # Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
-system_userid = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2-1"
-system_username = "Public Announcements"
+systemUserId = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2-1"
+systemUsername = "Public Announcements"

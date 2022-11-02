@@ -397,9 +397,7 @@ func (s *RoomRecorderService) insertTracksOnInterval(
 				trackSavedId,
 				len(tracks))
 			return
-		default:
-			time.Sleep(time.Millisecond)
-			_, isRunning := <-s.runningCh
+		case _, isRunning := <-s.runningCh:
 			if !isRunning {
 				s.insertTracks(
 					tracks,
@@ -410,6 +408,8 @@ func (s *RoomRecorderService) insertTracksOnInterval(
 					len(tracks))
 				return
 			}
+		default:
+			time.Sleep(time.Second)
 			if time.Since(lastSavedTime) > s.chopInterval {
 				lastSavedTime = time.Now()
 				newSavedId := len(tracks)

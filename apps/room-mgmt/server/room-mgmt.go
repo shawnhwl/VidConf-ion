@@ -50,26 +50,26 @@ type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
 
-type RoomMgmtSentryConf struct {
+type RoomSentryConf struct {
 	Url string `mapstructure:"url"`
 }
 
 type RoomMgmtConf struct {
 	Addr             string `mapstructure:"address"`
-	SystemUid        string `mapstructure:"system_userid"`
+	SystemUserId     string `mapstructure:"systemUserId"`
 	PlaybackIdPrefix string `mapstructure:"playbackIdPrefix"`
 }
 
 type Config struct {
-	Global         GlobalConf         `mapstructure:"global"`
-	Log            LogConf            `mapstructure:"log"`
-	Nats           NatsConf           `mapstructure:"nats"`
-	Redis          db.Config          `mapstructure:"redis"`
-	Postgres       PostgresConf       `mapstructure:"postgres"`
-	Minio          MinioConf          `mapstructure:"minio"`
-	Signal         SignalConf         `mapstructure:"signal"`
-	RoomMgmtSentry RoomMgmtSentryConf `mapstructure:"roomsentry"`
-	RoomMgmt       RoomMgmtConf       `mapstructure:"roommgmt"`
+	Global     GlobalConf     `mapstructure:"global"`
+	Log        LogConf        `mapstructure:"log"`
+	Nats       NatsConf       `mapstructure:"nats"`
+	Redis      db.Config      `mapstructure:"redis"`
+	Postgres   PostgresConf   `mapstructure:"postgres"`
+	Minio      MinioConf      `mapstructure:"minio"`
+	Signal     SignalConf     `mapstructure:"signal"`
+	RoomSentry RoomSentryConf `mapstructure:"roomsentry"`
+	RoomMgmt   RoomMgmtConf   `mapstructure:"roommgmt"`
 }
 
 func unmarshal(rawVal interface{}) error {

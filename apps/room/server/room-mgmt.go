@@ -92,8 +92,8 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 	}
 
 	isAllowed := false
-	if len(uId) >= s.rs.lenSystemUid {
-		if uId[:s.rs.lenSystemUid] == s.rs.systemUid {
+	if len(uId) >= s.rs.lenSystemUserId {
+		if uId[:s.rs.lenSystemUserId] == s.rs.systemUserId {
 			isAllowed = true
 		}
 	}

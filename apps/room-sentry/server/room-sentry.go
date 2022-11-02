@@ -41,21 +41,21 @@ type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
 
-type RoomMgmtSentryConf struct {
+type RoomSentryConf struct {
 	PollInSeconds  int      `mapstructure:"pollInSeconds"`
 	Addr           string   `mapstructure:"address"`
-	SystemUid      string   `mapstructure:"system_userid"`
-	SystemUsername string   `mapstructure:"system_username"`
+	SystemUserId   string   `mapstructure:"systemUserId"`
+	SystemUsername string   `mapstructure:"systemUsername"`
 	Endpoints      []string `mapstructure:"endpoints"`
 }
 
 type Config struct {
-	Global         GlobalConf         `mapstructure:"global"`
-	Log            LogConf            `mapstructure:"log"`
-	Nats           NatsConf           `mapstructure:"nats"`
-	Postgres       PostgresConf       `mapstructure:"postgres"`
-	Signal         SignalConf         `mapstructure:"signal"`
-	RoomMgmtSentry RoomMgmtSentryConf `mapstructure:"roomsentry"`
+	Global     GlobalConf     `mapstructure:"global"`
+	Log        LogConf        `mapstructure:"log"`
+	Nats       NatsConf       `mapstructure:"nats"`
+	Postgres   PostgresConf   `mapstructure:"postgres"`
+	Signal     SignalConf     `mapstructure:"signal"`
+	RoomSentry RoomSentryConf `mapstructure:"roomsentry"`
 }
 
 func unmarshal(rawVal interface{}) error {
@@ -110,7 +110,7 @@ type RoomSentry struct {
 	conf Config
 }
 
-// New create a RoomMgmtSentry node instance
+// New create a RoomSentry node instance
 func New() *RoomSentry {
 	api := &RoomSentry{
 		Node: ion.NewNode("room-sentry-" + util.RandomString(6)),
@@ -118,7 +118,7 @@ func New() *RoomSentry {
 	return api
 }
 
-// Start RoomMgmtSentry node
+// Start RoomSentry node
 func (r *RoomSentry) Start(conf Config) error {
 	var err error
 

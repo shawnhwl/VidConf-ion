@@ -52,10 +52,10 @@ type SignalConf struct {
 
 type RecorderConf struct {
 	Addr             string `mapstructure:"addr"`
-	Roomid           string `mapstructure:"roomid"`
+	RoomId           string `mapstructure:"roomid"`
 	ChoppedInSeconds int    `mapstructure:"choppedInSeconds"`
-	SystemUid        string `mapstructure:"system_userid"`
-	SystemUsername   string `mapstructure:"system_username"`
+	SystemUserId     string `mapstructure:"systemUserId"`
+	SystemUsername   string `mapstructure:"systemUsername"`
 }
 
 type Config struct {

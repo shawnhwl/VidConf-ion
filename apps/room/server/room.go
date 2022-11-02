@@ -60,7 +60,7 @@ type MinioConf struct {
 
 type RoomMgmtConf struct {
 	ReservedUsernames []string `mapstructure:"reserved_usernames"`
-	SystemUid         string   `mapstructure:"system_userid"`
+	SystemUserId      string   `mapstructure:"systemUserId"`
 	PlaybackIdPrefix  string   `mapstructure:"playbackIdPrefix"`
 }
 

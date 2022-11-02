@@ -39,8 +39,8 @@ type RoomService struct {
 	bucketName  string
 
 	reservedUsernames []string
-	systemUid         string
-	lenSystemUid      int
+	systemUserId      string
+	lenSystemUserId   int
 	playbackIdPrefix  string
 }
 
@@ -67,8 +67,8 @@ func NewRoomService(conf Config) *RoomService {
 		bucketName:  conf.Minio.BucketName,
 
 		reservedUsernames: reservedUsernames,
-		systemUid:         conf.RoomMgmt.SystemUid,
-		lenSystemUid:      len(conf.RoomMgmt.SystemUid),
+		systemUserId:      conf.RoomMgmt.SystemUserId,
+		lenSystemUserId:   len(conf.RoomMgmt.SystemUserId),
 		playbackIdPrefix:  conf.RoomMgmt.PlaybackIdPrefix,
 	}
 	go s.stat()
@@ -745,7 +745,7 @@ func (s *RoomService) createRoom(sid string) *Room {
 	var r *Room
 	if sid[:len(s.playbackIdPrefix)] == s.playbackIdPrefix {
 		r = newRoom(sid,
-			s.systemUid,
+			s.systemUserId,
 			s.redis,
 			nil,
 			"",
@@ -753,7 +753,7 @@ func (s *RoomService) createRoom(sid string) *Room {
 			"")
 	} else {
 		r = newRoom(sid,
-			s.systemUid,
+			s.systemUserId,
 			s.redis,
 			s.postgresDB,
 			s.roomRecordSchema,
