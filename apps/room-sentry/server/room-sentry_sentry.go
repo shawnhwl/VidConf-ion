@@ -205,7 +205,7 @@ func (s *RoomSentryService) checkForServiceCall() {
 	s.sortTimes()
 	s.onRoomChanges <- "ok"
 
-	log.Infof("RoomMgmtSentryService Started")
+	log.Infof("RoomMgmtSentryService Started, Poll interval:%v", s.pollInterval)
 	for {
 		select {
 		case playbackId := <-s.onPlaybackCreate:

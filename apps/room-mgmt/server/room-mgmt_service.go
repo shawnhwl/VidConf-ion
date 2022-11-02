@@ -2096,14 +2096,14 @@ func getPostgresDB(config Config) *sql.DB {
 					"id"             UUID PRIMARY KEY,
 					"name"           TEXT NOT NULL,
 					"status"         TEXT NOT NULL,
-					"startTime"      TIMESTAMP NOT NULL,
-					"endTime"        TIMESTAMP NOT NULL,
+					"startTime"      TIMESTAMPTZ NOT NULL,
+					"endTime"        TIMESTAMPTZ NOT NULL,
 					"allowedUserId"  TEXT ARRAY NOT NULL,
 					"earlyEndReason" TEXT NOT NULL,
 					"createdBy"      TEXT NOT NULL,
-					"createdAt"      TIMESTAMP NOT NULL,
+					"createdAt"      TIMESTAMPTZ NOT NULL,
 					"updatedBy"      TEXT NOT NULL,
-					"updatedAt"      TIMESTAMP NOT NULL)`
+					"updatedAt"      TIMESTAMPTZ NOT NULL)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -2124,9 +2124,9 @@ func getPostgresDB(config Config) *sql.DB {
 					"relativeFrom"          TEXT NOT NULL,
 					"relativeTimeInSeconds" INT NOT NULL,
 					"userId"                TEXT ARRAY NOT NULL,
-					"createdAt"             TIMESTAMP NOT NULL,
+					"createdAt"             TIMESTAMPTZ NOT NULL,
 					"createdBy"             TEXT NOT NULL,
-					"updatedAt"             TIMESTAMP NOT NULL,
+					"updatedAt"             TIMESTAMPTZ NOT NULL,
 					"updatedBy"             TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -2158,8 +2158,8 @@ func getPostgresDB(config Config) *sql.DB {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."room"(
 					"id"        UUID PRIMARY KEY,
 					"name"      TEXT NOT NULL,
-					"startTime" TIMESTAMP NOT NULL,
-					"endTime"   TIMESTAMP NOT NULL,
+					"startTime" TIMESTAMPTZ NOT NULL,
+					"endTime"   TIMESTAMPTZ NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -2176,7 +2176,7 @@ func getPostgresDB(config Config) *sql.DB {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
 					"id"           UUID PRIMARY KEY,
 					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMP NOT NULL,
+					"timestamp"    TIMESTAMPTZ NOT NULL,
 					"userId"       TEXT NOT NULL,
 					"userName"     TEXT NOT NULL,
 					"text"         TEXT NOT NULL,
@@ -2196,7 +2196,7 @@ func getPostgresDB(config Config) *sql.DB {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
 					"id"           UUID PRIMARY KEY,
 					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMP NOT NULL,
+					"timestamp"    TIMESTAMPTZ NOT NULL,
 					"userId"       TEXT NOT NULL,
 					"userName"     TEXT NOT NULL,
 					"fileName"     TEXT NOT NULL,
