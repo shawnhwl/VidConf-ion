@@ -57,7 +57,7 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 	log.Infof("onRTCTrack receiver: %+v", receiver)
 
 	trackCh := make(chan Track, 128)
-	eofCh := make(chan bool)
+	eofCh := make(chan struct{})
 	go s.insertTracksOnInterval(
 		OnTrack{
 			time.Now(),
@@ -86,7 +86,7 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 
 	codecName := strings.Split(track.Codec().RTPCodecCapability.MimeType, "/")[1]
 	log.Infof("Track has started, of type %d: %s \n", track.PayloadType(), codecName)
-	buf := make([]byte, 1500)
+	buf := make([]byte, 65535)
 	for {
 		readCnt, _, readErr := track.Read(buf)
 		if readErr != nil {
@@ -95,7 +95,7 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 			} else {
 				log.Errorf("%v", readErr)
 			}
-			eofCh <- true
+			eofCh <- struct{}{}
 			return
 		}
 		if readCnt == 0 {
@@ -109,7 +109,7 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 
 func (s *RoomRecorderService) onRTCError(err error) {
 	log.Errorf("onRTCError: %+v", err)
-	s.joinRoomCh <- true
+	s.joinRoomCh <- struct{}{}
 }
 
 func (s *RoomRecorderService) onRTCTrackEvent(event sdk.TrackEvent) {
@@ -138,7 +138,7 @@ func (s *RoomRecorderService) onRoomJoin(success bool, info sdk.RoomInfo, err er
 
 	err = s.roomRTC.Join(s.roomId, s.systemUid)
 	if err != nil {
-		s.joinRoomCh <- true
+		s.joinRoomCh <- struct{}{}
 		return
 	}
 	s.timeReady = time.Now().Format(time.RFC3339)
@@ -155,12 +155,12 @@ func (s *RoomRecorderService) onRoomMessage(from string, to string, data map[str
 
 func (s *RoomRecorderService) onRoomDisconnect(sid, reason string) {
 	log.Infof("onRoomDisconnect sid = %+v, reason = %+v", sid, reason)
-	s.joinRoomCh <- true
+	s.joinRoomCh <- struct{}{}
 }
 
 func (s *RoomRecorderService) onRoomError(err error) {
 	log.Errorf("onRoomError %v", err)
-	s.joinRoomCh <- true
+	s.joinRoomCh <- struct{}{}
 }
 
 func (s *RoomRecorderService) onRoomLeave(success bool, err error) {
@@ -211,19 +211,6 @@ func getRoomService(config Config) (*sdk.Connector, *sdk.Room, *sdk.RTC, error) 
 	return sdkConnector, roomService, roomRTC, nil
 }
 
-func (s *RoomRecorderService) getRoomInfo() {
-	var room Room
-	for {
-		room = s.getRoomsByRoomid(s.roomId)
-		if room.status == ROOM_BOOKED {
-			log.Warnf("Room is not started yet, check again in a minute")
-			time.Sleep(time.Minute)
-			continue
-		}
-		break
-	}
-}
-
 func (s *RoomRecorderService) openRoom() {
 	s.closeRoom()
 	var err error
@@ -268,7 +255,7 @@ func (s *RoomRecorderService) joinRoom() {
 		},
 	)
 	if err != nil {
-		s.joinRoomCh <- true
+		s.joinRoomCh <- struct{}{}
 		return
 	}
 
@@ -365,7 +352,7 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 func (s *RoomRecorderService) insertTracksOnInterval(
 	onTrack OnTrack,
 	trackCh chan Track,
-	eofCh chan bool) {
+	eofCh chan struct{}) {
 
 	s.waitUpload.Add(1)
 	defer s.waitUpload.Done()
@@ -432,14 +419,16 @@ func (s *RoomRecorderService) insertOnTracks(onTrack OnTrack) string {
 	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."onTrack"(
 					"id",
 					"roomId",
+					"trackId",
 					"timestamp",
 					"trackRemote")
-					VALUES($1, $2, $3, $4)`
+					VALUES($1, $2, $3, $4, $5)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			dbId,
 			s.roomId,
+			onTrack.trackId,
 			onTrack.timestamp,
 			trackRemote)
 		if err == nil {

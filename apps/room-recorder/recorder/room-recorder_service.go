@@ -41,7 +41,7 @@ func (s *RoomRecorderService) getReadiness(c *gin.Context) {
 type RoomRecorderService struct {
 	conf           Config
 	quitCh         chan os.Signal
-	joinRoomCh     chan bool
+	joinRoomCh     chan struct{}
 	isSdkConnected bool
 	runningCh      chan struct{}
 	waitUpload     *sync.WaitGroup
@@ -73,7 +73,7 @@ func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderS
 	s := &RoomRecorderService{
 		conf:           config,
 		quitCh:         quitCh,
-		joinRoomCh:     make(chan bool, 32),
+		joinRoomCh:     make(chan struct{}, 32),
 		isSdkConnected: true,
 		runningCh:      make(chan struct{}),
 		waitUpload:     new(sync.WaitGroup),
@@ -97,10 +97,10 @@ func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderS
 		systemUid:      config.Recorder.SystemUserId,
 		systemUsername: config.Recorder.SystemUsername,
 	}
-	s.getRoomInfo()
 	go s.start()
+	s.getRoomInfo()
 	go s.checkForRoomError()
-	s.joinRoomCh <- true
+	s.joinRoomCh <- struct{}{}
 
 	return s
 }
@@ -292,6 +292,7 @@ func getPostgresDB(config Config) *sql.DB {
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."onTrack"(
 					"id"           UUID PRIMARY KEY,
 					"roomId"       UUID NOT NULL,
+					"trackId"      TEXT NOT NULL,
 					"timestamp"    TIMESTAMPTZ NOT NULL,
 					"trackRemote"  JSON NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
@@ -328,6 +329,19 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 
 	return postgresDB
+}
+
+func (s *RoomRecorderService) getRoomInfo() {
+	var room Room
+	for {
+		room = s.getRoomsByRoomid(s.roomId)
+		if room.status == ROOM_BOOKED {
+			log.Warnf("Room is not started yet, check again in a minute")
+			time.Sleep(time.Minute)
+			continue
+		}
+		break
+	}
 }
 
 func (s *RoomRecorderService) start() {
