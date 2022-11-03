@@ -779,10 +779,17 @@ func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
 	getChatRange.Msg = chatPayloads
 	for id := range getChatRange.Msg {
 		if getChatRange.Msg[id].Base64File != nil {
-			object, err := s.minioClient.GetObject(context.Background(),
-				s.bucketName,
-				roomId+*getChatRange.Msg[id].Base64File.FilePath,
-				minio.GetObjectOptions{})
+			var object *minio.Object
+			for retry := 0; retry < RETRY_COUNT; retry++ {
+				object, err = s.minioClient.GetObject(context.Background(),
+					s.bucketName,
+					roomId+*getChatRange.Msg[id].Base64File.FilePath,
+					minio.GetObjectOptions{})
+				if err == nil {
+					break
+				}
+				time.Sleep(RETRY_DELAY)
+			}
 			if err != nil {
 				errorString := fmt.Sprintf("could not download attachment: %s", err)
 				log.Errorf(errorString)
@@ -792,7 +799,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
 			buf := new(bytes.Buffer)
 			_, err = buf.ReadFrom(object)
 			if err != nil {
-				errorString := fmt.Sprintf("could not process download: %s", err)
+				errorString := fmt.Sprintf("could not process downloaded attachment: %s", err)
 				log.Errorf(errorString)
 				c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 				return
@@ -858,10 +865,17 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 	getChatRange.Msg = make([]ChatPayload, 0)
 	for id := fromIndex; id <= toIndex; id++ {
 		if chatPayloads[id].Base64File != nil {
-			object, err := s.minioClient.GetObject(context.Background(),
-				s.bucketName,
-				roomId+*chatPayloads[id].Base64File.FilePath,
-				minio.GetObjectOptions{})
+			var object *minio.Object
+			for retry := 0; retry < RETRY_COUNT; retry++ {
+				object, err = s.minioClient.GetObject(context.Background(),
+					s.bucketName,
+					roomId+*chatPayloads[id].Base64File.FilePath,
+					minio.GetObjectOptions{})
+				if err == nil {
+					break
+				}
+				time.Sleep(RETRY_DELAY)
+			}
 			if err != nil {
 				errorString := fmt.Sprintf("could not download attachment: %s", err)
 				log.Errorf(errorString)

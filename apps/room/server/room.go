@@ -673,7 +673,7 @@ func (r *Room) insertChatFile(chatPayload ChatPayload) {
 		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("could not upload file: %s", err)
+		log.Errorf("could not upload attachment: %s", err)
 	}
 	log.Infof("successfully uploaded bytes: ", uploadInfo)
 }

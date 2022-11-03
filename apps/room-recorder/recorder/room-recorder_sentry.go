@@ -48,7 +48,7 @@ type OnTrack struct {
 }
 
 type Track struct {
-	timestamp time.Time
+	Timestamp time.Time
 	Data      []byte
 }
 
@@ -486,8 +486,8 @@ func (s *RoomRecorderService) insertTracks(
 		log.Errorf("could not insert into database: %s", err)
 	}
 
-	data := new(bytes.Buffer)
-	err = gob.NewEncoder(data).Encode(tracks[startId:endId])
+	var data bytes.Buffer
+	err = gob.NewEncoder(&data).Encode(tracks[startId:endId])
 	if err != nil {
 		log.Errorf("track encoding error:", err)
 		return
@@ -497,7 +497,7 @@ func (s *RoomRecorderService) insertTracks(
 		uploadInfo, err = s.minioClient.PutObject(context.Background(),
 			s.bucketName,
 			s.roomId+filePath,
-			data,
+			&data,
 			int64(data.Len()),
 			minio.PutObjectOptions{ContentType: "application/octet-stream"})
 		if err == nil {
