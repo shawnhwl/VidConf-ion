@@ -28,13 +28,15 @@ bucketName = "vidconf"
 # The addr for grpc signalling
 addr = "localhost:5551"
 
-[recorder]
+[roomsentry]
+# The addr for roomsentry
+url = "http://localhost:7073"
+
+[playback]
 # The address the monitoring server will listen on.
-addr = "0.0.0.0:7081"
-# Roomid to record session
-roomid = "efcc3ad6-de93-4223-b18e-df964d94e9ca"
-# time in seconds per chopped section
-choppedInSeconds = 5
+addr = "0.0.0.0:7083"
+# PlaybackId to broadcast playback
+playbackId = "bac00cab-8174-4194-a7ef-8e19a3330e4e"
 # UserId and UserName used by system to join the room sessions
 # Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
 systemUserId = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2-1"

@@ -247,8 +247,8 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 		key = util.GetRedisPeerKey(sid, uid)
 		res = s.rs.redis.HGetAll(key)
 		if len(res) != 0 {
-			if len(res["uid"]) >= r.lenSystemUid {
-				if res["uid"][:r.lenSystemUid] == r.systemUid {
+			if len(res["uid"]) >= r.lenSystemUserId {
+				if res["uid"][:r.lenSystemUserId] == r.systemUserId {
 					continue
 				}
 			}

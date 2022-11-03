@@ -128,8 +128,8 @@ type Room struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	systemUid    string
-	lenSystemUid int
+	systemUserId    string
+	lenSystemUserId int
 }
 
 type RoomServer struct {
@@ -282,8 +282,8 @@ func newRoom(sid, systemUid string,
 		minioClient: minioClient,
 		bucketName:  bucketName,
 
-		systemUid:    systemUid,
-		lenSystemUid: len(systemUid),
+		systemUserId:    systemUid,
+		lenSystemUserId: len(systemUid),
 	}
 	return r
 }
@@ -393,8 +393,8 @@ func (r *Room) broadcastRoomEvent(uid string, event *room.Reply) {
 }
 
 func (r *Room) broadcastPeerEvent(event *room.PeerEvent) {
-	if len(event.Peer.Uid) >= r.lenSystemUid {
-		if event.Peer.Uid[:r.lenSystemUid] == r.systemUid {
+	if len(event.Peer.Uid) >= r.lenSystemUserId {
+		if event.Peer.Uid[:r.lenSystemUserId] == r.systemUserId {
 			return
 		}
 	}
@@ -428,7 +428,7 @@ func (r *Room) sendMessage(msg *room.Message) {
 	data := msg.Payload
 	log.Debugf("Room.onMessage %v => %v, type: %v, data: %v", from, to, dtype, data)
 
-	isParticipant := from == r.systemUid
+	isParticipant := from == r.systemUserId
 	peers := r.getPeers()
 	for _, p := range peers {
 		if isParticipant {
@@ -459,8 +459,8 @@ func (r *Room) sendMessage(msg *room.Message) {
 
 	for _, p := range peers {
 		isRecipient := to == p.info.Uid
-		if len(p.info.Uid) >= r.lenSystemUid {
-			if p.info.Uid[:r.lenSystemUid] == r.systemUid {
+		if len(p.info.Uid) >= r.lenSystemUserId {
+			if p.info.Uid[:r.lenSystemUserId] == r.systemUserId {
 				isRecipient = true
 			}
 		}
