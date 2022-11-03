@@ -930,7 +930,7 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 																		"roomId",
 																		"name",
 																		"endpoint")
-					VALUES($1, $2, $3)`
+					VALUES($1, $2, $3, $4)`
 	playbackId := s.getPlaybackUuid(true)
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name, "")

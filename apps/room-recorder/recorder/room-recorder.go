@@ -188,7 +188,7 @@ func (s *RoomRecorder) Close() {
 }
 
 func (s *RoomRecorder) FinalizeRoomRecord() {
-	close(s.runningCh)
+	close(s.exitCh)
 	time.Sleep(time.Second)
 	s.waitUpload.Wait()
 }

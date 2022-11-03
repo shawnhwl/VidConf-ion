@@ -95,7 +95,7 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 			} else {
 				log.Errorf("%v", readErr)
 			}
-			eofCh <- struct{}{}
+			close(eofCh)
 			return
 		}
 		if readCnt == 0 {
@@ -146,11 +146,9 @@ func (s *RoomRecorderService) onRoomJoin(success bool, info sdk.RoomInfo, err er
 }
 
 func (s *RoomRecorderService) onRoomPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
-	log.Infof("onRoomPeerEvent state = %+v, peer = %+v", state, peer)
 }
 
 func (s *RoomRecorderService) onRoomMessage(from string, to string, data map[string]interface{}) {
-	log.Infof("onRoomMessage from = %+v, to = %+v, data = %+v", from, to, data)
 }
 
 func (s *RoomRecorderService) onRoomDisconnect(sid, reason string) {
@@ -164,19 +162,15 @@ func (s *RoomRecorderService) onRoomError(err error) {
 }
 
 func (s *RoomRecorderService) onRoomLeave(success bool, err error) {
-	log.Warnf("Not Implemented onRoomLeave: success %v, onLeave %v", success, err)
 }
 
 func (s *RoomRecorderService) onRoomInfo(info sdk.RoomInfo) {
-	log.Warnf("Not Implemented onRoomInfo: %v", info)
 }
 
 func (s *RoomRecorderService) onRTCDataChannel(dc *webrtc.DataChannel) {
-	log.Warnf("Not Implemented onRTCDataChannel: %+v", dc)
 }
 
 func (s *RoomRecorderService) onRTCSpeaker(event []string) {
-	log.Warnf("Not Implemented onRTCSpeaker: %+v", event)
 }
 
 func (s *RoomRecorderService) closeRoom() {
@@ -381,17 +375,15 @@ func (s *RoomRecorderService) insertTracksOnInterval(
 				trackSavedId,
 				len(tracks))
 			return
-		case _, isRunning := <-s.runningCh:
-			if !isRunning {
-				s.insertTracks(
-					tracks,
-					trackId,
-					dbId,
-					folderName,
-					trackSavedId,
-					len(tracks))
-				return
-			}
+		case <-s.exitCh:
+			s.insertTracks(
+				tracks,
+				trackId,
+				dbId,
+				folderName,
+				trackSavedId,
+				len(tracks))
+			return
 		default:
 			time.Sleep(time.Second)
 			if time.Since(lastSavedTime) > s.chopInterval {
@@ -468,7 +460,7 @@ func (s *RoomRecorderService) insertTracks(
 			objName,
 			dbId,
 			s.roomId,
-			tracks[startId].timestamp,
+			tracks[startId].Timestamp,
 			filePath)
 		if err == nil {
 			break

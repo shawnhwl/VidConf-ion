@@ -43,7 +43,7 @@ type RoomRecorderService struct {
 	quitCh         chan os.Signal
 	joinRoomCh     chan struct{}
 	isSdkConnected bool
-	runningCh      chan struct{}
+	exitCh         chan struct{}
 	waitUpload     *sync.WaitGroup
 
 	timeLive  string
@@ -75,7 +75,7 @@ func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderS
 		quitCh:         quitCh,
 		joinRoomCh:     make(chan struct{}, 32),
 		isSdkConnected: true,
-		runningCh:      make(chan struct{}),
+		exitCh:         make(chan struct{}),
 		waitUpload:     new(sync.WaitGroup),
 
 		timeLive:  timeLive,
