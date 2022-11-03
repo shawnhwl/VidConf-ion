@@ -1949,7 +1949,6 @@ func (s *RoomMgmtService) getRoomService(signalAddr string) (*sdk.Connector, *sd
 
 func (s *RoomMgmtService) closeRoomService(sdkConnector *sdk.Connector, roomService *sdk.Room) {
 	if roomService != nil {
-		roomService.Close()
 		roomService = nil
 	}
 	if sdkConnector != nil {

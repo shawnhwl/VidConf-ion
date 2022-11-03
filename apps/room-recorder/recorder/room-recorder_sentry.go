@@ -181,12 +181,9 @@ func (s *RoomRecorderService) onRTCSpeaker(event []string) {
 
 func (s *RoomRecorderService) closeRoom() {
 	if s.roomRTC != nil {
-		s.roomRTC.Close()
 		s.roomRTC = nil
 	}
 	if s.roomService != nil {
-		s.roomService.Leave(s.roomId, s.systemUid)
-		s.roomService.Close()
 		s.roomService = nil
 	}
 	if s.sdkConnector != nil {

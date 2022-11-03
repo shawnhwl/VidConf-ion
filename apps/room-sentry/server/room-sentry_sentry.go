@@ -191,8 +191,6 @@ func (s *RoomSentryService) getRoomService(signalAddr string) (*sdk.Connector, *
 
 func (s *RoomSentryService) closeRoomService(sdkConnector *sdk.Connector, roomService *sdk.Room) {
 	if roomService != nil {
-		roomService.Leave(s.systemUid, s.systemUid)
-		roomService.Close()
 		roomService = nil
 	}
 	if sdkConnector != nil {
