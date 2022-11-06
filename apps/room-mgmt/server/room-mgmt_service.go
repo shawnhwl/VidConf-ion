@@ -978,7 +978,7 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 
 	err = s.httpPost(endpoint + "/" + speed)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
@@ -1012,7 +1012,7 @@ func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
 
 	err = s.httpPost(endpoint + "/" + speed + "/" + secondsFromStart)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
@@ -1034,7 +1034,7 @@ func (s *RoomMgmtService) postPlaybackPause(c *gin.Context) {
 
 	err = s.httpPost(endpoint + "/pause")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
@@ -2304,7 +2304,7 @@ func (s *RoomMgmtService) checkForRemoteCtrl() {
 func (s *RoomMgmtService) httpPost(requestURL string) error {
 	request, err := http.NewRequest(http.MethodPost, requestURL, nil)
 	if err != nil {
-		log.Errorf("error sending http.POST: %v", err)
+		log.Errorf("error sending http: %v", err)
 		return err
 	}
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -2315,7 +2315,7 @@ func (s *RoomMgmtService) httpPost(requestURL string) error {
 		time.Sleep(RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("error sending http.POST: %v", err)
+		log.Errorf("error sending http: %v", err)
 		return err
 	}
 	return nil
