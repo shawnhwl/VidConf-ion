@@ -242,10 +242,10 @@ func getPostgresDB(config Config) *sql.DB {
 		os.Exit(1)
 	}
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackEvent"(
-					"id"        UUID PRIMARY KEY,
-					"roomId"    UUID NOT NULL,
-					"peerId"    TEXT NOT NULL,
-					"trackIds"  TEXT ARRAY NOT NULL,
+					"id"             UUID PRIMARY KEY,
+					"roomId"         UUID NOT NULL,
+					"peerId"         TEXT NOT NULL,
+					"trackRemoteIds" TEXT ARRAY NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -260,10 +260,10 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "track"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."track"(
-					"id"       UUID PRIMARY KEY,
-					"roomId"   UUID NOT NULL,
-					"trackId"  TEXT NOT NULL,
-					"mimeType" TEXT NOT NULL,
+					"id"            UUID PRIMARY KEY,
+					"roomId"        UUID NOT NULL,
+					"trackRemoteId" TEXT NOT NULL,
+					"mimeType"      TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)

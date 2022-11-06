@@ -25,14 +25,14 @@ const (
 )
 
 type TrackEvent struct {
-	peerId   string
-	trackIds pq.StringArray
+	peerId         string
+	trackRemoteIds pq.StringArray
 }
 
 type Track struct {
-	trackId  string
-	mimeType string
-	kind     webrtc.RTPCodecType
+	trackRemoteId string
+	mimeType      string
+	kind          webrtc.RTPCodecType
 }
 
 type TrackStream struct {
@@ -89,6 +89,9 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 
 func (s *RoomRecorderService) onRTCTrackEvent(event sdk.TrackEvent) {
 	log.Infof("onRTCTrackEvent: %+v", event)
+	if event.State == sdk.TrackEvent_REMOVE {
+		return
+	}
 	trackIds := make(pq.StringArray, 0)
 	for _, track := range event.Tracks {
 		log.Infof("onTrackEvent: %+v", track)
@@ -237,7 +240,7 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 					"id",
 					"roomId",
 					"peerId",
-					"trackIds")
+					"trackRemoteIds")
 					VALUES($1, $2, $3, $4)`
 	s.waitUpload.Add(1)
 	defer s.waitUpload.Done()
@@ -247,7 +250,7 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 			trackEventId,
 			s.roomId,
 			trackEvent.peerId,
-			trackEvent.trackIds)
+			trackEvent.trackRemoteIds)
 		if err == nil {
 			break
 		}
@@ -270,7 +273,7 @@ func (s *RoomRecorderService) insertTrackOnInterval(
 	s.waitUpload.Add(1)
 	defer s.waitUpload.Done()
 	dbId := s.insertTrack(track)
-	trackId := track.trackId
+	trackId := track.trackRemoteId
 
 	var folderName string
 	if track.kind == webrtc.RTPCodecTypeAudio {
@@ -328,7 +331,7 @@ func (s *RoomRecorderService) insertTrack(track Track) string {
 	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."track"(
 					"id",
 					"roomId",
-					"trackId",
+					"trackRemoteId",
 					"mimeType")
 					VALUES($1, $2, $3, $4)`
 	dbId := uuid.NewString()
@@ -336,7 +339,7 @@ func (s *RoomRecorderService) insertTrack(track Track) string {
 		_, err = s.postgresDB.Exec(insertStmt,
 			dbId,
 			s.roomId,
-			track.trackId,
+			track.trackRemoteId,
 			track.mimeType)
 		if err == nil {
 			break
