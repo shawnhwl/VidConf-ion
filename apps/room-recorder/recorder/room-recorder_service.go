@@ -188,6 +188,8 @@ func getPostgresDB(config Config) *sql.DB {
 					"id"             UUID PRIMARY KEY,
 					"name"           TEXT NOT NULL,
 					"status"         TEXT NOT NULL,
+					"httpEndpoint"	 TEXT NOT NULL,
+					"signalEndpoint" TEXT NOT NULL,
 					"startTime"      TIMESTAMPTZ NOT NULL,
 					"endTime"        TIMESTAMPTZ NOT NULL,
 					"allowedUserId"  TEXT ARRAY NOT NULL,

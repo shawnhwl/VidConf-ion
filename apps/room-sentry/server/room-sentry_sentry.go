@@ -30,10 +30,6 @@ type Announcement struct {
 	relativeFrom          string
 	relativeTimeInSeconds int64
 	userId                pq.StringArray
-	createdBy             string
-	createdAt             time.Time
-	updatedBy             string
-	updatedAt             time.Time
 }
 
 type Room struct {
@@ -43,12 +39,7 @@ type Room struct {
 	startTime      time.Time
 	endTime        time.Time
 	announcements  []Announcement
-	allowedUserId  pq.StringArray
 	earlyEndReason string
-	createdBy      string
-	createdAt      time.Time
-	updatedBy      string
-	updatedAt      time.Time
 }
 
 func (s *RoomSentryService) createRoom(roomId, roomname string) error {
@@ -81,14 +72,14 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 	}
 	payload := map[string]interface{}{
 		"msg": map[string]interface{}{
-			"uid":       s.systemUid,
+			"uid":       s.systemUserId,
 			"name":      s.systemUsername,
 			"text":      message,
 			"timestamp": time.Now().Format(time.RFC3339),
 		},
 	}
 	if len(toId) == 0 {
-		err := roomService.SendMessage(roomId, s.systemUid, "all", payload)
+		err := roomService.SendMessage(roomId, s.systemUserId, "all", payload)
 		if err != nil {
 			output := fmt.Sprintf("Error sending message '%s' to all users in roomId '%s' : %v", message, roomId, err)
 			log.Errorf(output)
@@ -109,13 +100,13 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 				err = errors.New(output)
 				continue
 			}
-			err1 := roomService.SendMessage(roomId, s.systemUid, userId, payload)
+			err1 := roomService.SendMessage(roomId, s.systemUserId, userId, payload)
 			if err1 != nil {
 				err = err1
 			}
 			payload = map[string]interface{}{
 				"msg": map[string]interface{}{
-					"uid":              s.systemUid,
+					"uid":              s.systemUserId,
 					"name":             s.systemUsername,
 					"text":             message,
 					"timestamp":        time.Now().Format(time.RFC3339),
@@ -247,10 +238,10 @@ func (s *RoomSentryService) createPlayback(playbackId string) {
 		return
 	}
 	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."playback"
-					SET "endpoint"=$1 WHERE "id"=$2`
+					SET "httpEndpoint"=$1 WHERE "id"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
-			s.endpoints[0],
+			s.httpEndpoints[0],
 			playbackId)
 		if err == nil {
 			break
@@ -588,12 +579,7 @@ func (s *RoomSentryService) queryRoom(roomId string) (Room, error) {
 							"status",
 							"startTime",
 							"endTime",
-							"allowedUserId",
-							"earlyEndReason",
-							"createdBy",
-							"createdAt",
-							"updatedBy",
-							"updatedAt"
+							"earlyEndReason"
 					FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 	var rows *sql.Row
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -614,12 +600,7 @@ func (s *RoomSentryService) queryRoom(roomId string) (Room, error) {
 		&room.status,
 		&room.startTime,
 		&room.endTime,
-		&room.allowedUserId,
-		&room.earlyEndReason,
-		&room.createdBy,
-		&room.createdAt,
-		&room.updatedBy,
-		&room.updatedAt)
+		&room.earlyEndReason)
 	if err != nil {
 		return Room{}, err
 	}
@@ -630,11 +611,7 @@ func (s *RoomSentryService) queryRoom(roomId string) (Room, error) {
 						"message",
 						"relativeFrom",
 						"relativeTimeInSeconds",
-						"userId",
-						"createdBy",
-						"createdAt",
-						"updatedBy",
-						"updatedAt"
+						"userId"
 					FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "roomId"=$1`
 	var announcements *sql.Rows
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -655,11 +632,7 @@ func (s *RoomSentryService) queryRoom(roomId string) (Room, error) {
 			&announcement.message,
 			&announcement.relativeFrom,
 			&announcement.relativeTimeInSeconds,
-			&announcement.userId,
-			&announcement.createdBy,
-			&announcement.createdAt,
-			&announcement.updatedBy,
-			&announcement.updatedAt)
+			&announcement.userId)
 		if err != nil {
 			return Room{}, err
 		}

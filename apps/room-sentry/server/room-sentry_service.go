@@ -67,9 +67,9 @@ type RoomSentryService struct {
 	roomRecordSchema string
 
 	pollInterval   time.Duration
-	systemUid      string
+	systemUserId   string
 	systemUsername string
-	endpoints      []string
+	httpEndpoints  []string
 
 	roomStarts       map[string]StartRooms
 	roomStartKeys    []string
@@ -148,9 +148,9 @@ func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 		roomRecordSchema: config.Postgres.RoomRecordSchema,
 
 		pollInterval:   time.Duration(config.RoomSentry.PollInSeconds) * time.Second,
-		systemUid:      config.RoomSentry.SystemUserId,
+		systemUserId:   config.RoomSentry.SystemUserId,
 		systemUsername: config.RoomSentry.SystemUsername,
-		endpoints:      config.RoomSentry.Endpoints,
+		httpEndpoints:  config.RoomSentry.HttpEndpoints,
 
 		roomStarts:       make(map[string]StartRooms),
 		roomStartKeys:    make([]string, 0),
@@ -225,6 +225,8 @@ func getPostgresDB(config Config) *sql.DB {
 					"id"             UUID PRIMARY KEY,
 					"name"           TEXT NOT NULL,
 					"status"         TEXT NOT NULL,
+					"httpEndpoint"	 TEXT NOT NULL,
+					"signalEndpoint" TEXT NOT NULL,
 					"startTime"      TIMESTAMPTZ NOT NULL,
 					"endTime"        TIMESTAMPTZ NOT NULL,
 					"allowedUserId"  TEXT ARRAY NOT NULL,
@@ -303,10 +305,11 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "playback"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."playback"(
-					"id"       UUID PRIMARY KEY,
-					"roomId"   UUID NOT NULL,
-					"name"     TEXT NOT NULL,
-					"endpoint" TEXT NOT NULL,
+					"id"             UUID PRIMARY KEY,
+					"roomId"         UUID NOT NULL,
+					"name"           TEXT NOT NULL,
+					"httpEndpoint"   TEXT NOT NULL,
+					"signalEndpoint" TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)

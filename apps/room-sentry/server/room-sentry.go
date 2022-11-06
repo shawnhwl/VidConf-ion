@@ -46,7 +46,7 @@ type RoomSentryConf struct {
 	Addr           string   `mapstructure:"address"`
 	SystemUserId   string   `mapstructure:"systemUserId"`
 	SystemUsername string   `mapstructure:"systemUsername"`
-	Endpoints      []string `mapstructure:"endpoints"`
+	HttpEndpoints  []string `mapstructure:"httpEndpoints"`
 }
 
 type Config struct {

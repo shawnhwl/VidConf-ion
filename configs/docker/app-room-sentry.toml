@@ -31,4 +31,4 @@ address = "0.0.0.0:7073"
 systemUserId = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
 systemUsername = "Public Announcements"
 # endpoint pool for spinning of room-recorder and playback
-endpoints = ["http://localhost:7083"]
+httpEndpoints = ["http://localhost:7083"]

@@ -255,6 +255,8 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."room"(   "id",
 																	"name",
 																	"status",
+																	"httpEndpoint",
+																	"signalEndpoint",
 																	"startTime",
 																	"endTime",
 																	"allowedUserId",
@@ -269,6 +271,8 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 			room.id,
 			room.name,
 			room.status,
+			"",
+			"",
 			room.startTime,
 			room.endTime,
 			pq.Array(room.allowedUserId),
@@ -929,11 +933,12 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 	insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."playback"(   "id",
 																		"roomId",
 																		"name",
-																		"endpoint")
+																		"httpEndpoint",
+																		"signalEndpoint")
 					VALUES($1, $2, $3, $4)`
 	playbackId := s.getPlaybackUuid(true)
 	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name, "")
+		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name, "", "")
 		if err == nil {
 			break
 		}
@@ -954,18 +959,24 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 
 func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 	playbackId := c.Param("playbackid")
-	log.Infof("POST /playback/%s/play", playbackId)
+	speed := c.Param("speed")
+	log.Infof("POST /playback/%s/speed/%s/play", playbackId, speed)
 	if s.timeReady == "" {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
 		return
 	}
 
+	_, err := strconv.ParseFloat(speed, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
+		return
+	}
 	endpoint, err := s.queryPlayback(playbackId, c)
 	if err != nil {
 		return
 	}
 
-	err = s.httpPost(endpoint + "/play")
+	err = s.httpPost(endpoint + "/" + speed)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
 		return
@@ -976,14 +987,20 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 
 func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
 	playbackId := c.Param("playbackid")
+	speed := c.Param("speed")
 	secondsFromStart := c.Param("secondsfromstart")
-	log.Infof("POST /playback/%s/play/%s", playbackId, secondsFromStart)
+	log.Infof("POST /playback/%s/speed/:speed/play/%s", playbackId, speed, secondsFromStart)
 	if s.timeReady == "" {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
 		return
 	}
 
-	_, err := strconv.Atoi(secondsFromStart)
+	_, err := strconv.ParseFloat(speed, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
+		return
+	}
+	_, err = strconv.Atoi(secondsFromStart)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-integer skip interval"})
 		return
@@ -993,7 +1010,7 @@ func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
 		return
 	}
 
-	err = s.httpPost(endpoint + "/play/" + secondsFromStart)
+	err = s.httpPost(endpoint + "/" + speed + "/" + secondsFromStart)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error})
 		return
@@ -1686,7 +1703,7 @@ func (s *RoomMgmtService) queryRoomRecord(roomId string) (RoomRecord, error) {
 }
 
 func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) (string, error) {
-	queryStmt := `SELECT "endpoint" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
+	queryStmt := `SELECT "httpEndpoint" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
 	var row *sql.Row
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, playbackId)
@@ -1701,8 +1718,8 @@ func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) (stri
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		return "", row.Err()
 	}
-	var endpoint string
-	err := row.Scan(&endpoint)
+	var httpEndpoint string
+	err := row.Scan(&httpEndpoint)
 	if err != nil {
 		if strings.Contains(err.Error(), NOT_FOUND_PK) {
 			errorString := s.roomNotFound(playbackId)
@@ -1715,13 +1732,13 @@ func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) (stri
 		}
 		return "", err
 	}
-	if endpoint == "" {
+	if httpEndpoint == "" {
 		errorString := "playback is not yet ready"
 		log.Errorf(errorString)
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		return "", err
 	}
-	return endpoint, nil
+	return httpEndpoint, nil
 }
 
 func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gin.Context) error {
@@ -2122,6 +2139,8 @@ func getPostgresDB(config Config) *sql.DB {
 					"id"             UUID PRIMARY KEY,
 					"name"           TEXT NOT NULL,
 					"status"         TEXT NOT NULL,
+					"httpEndpoint"	 TEXT NOT NULL,
+					"signalEndpoint" TEXT NOT NULL,
 					"startTime"      TIMESTAMPTZ NOT NULL,
 					"endTime"        TIMESTAMPTZ NOT NULL,
 					"allowedUserId"  TEXT ARRAY NOT NULL,
@@ -2242,10 +2261,11 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "playback"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."playback"(
-					"id"       UUID PRIMARY KEY,
-					"roomId"   UUID NOT NULL,
-					"name"     TEXT NOT NULL,
-					"endpoint" TEXT NOT NULL,
+					"id"             UUID PRIMARY KEY,
+					"roomId"         UUID NOT NULL,
+					"name"           TEXT NOT NULL,
+					"httpEndpoint"   TEXT NOT NULL,
+					"signalEndpoint" TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -2334,8 +2354,8 @@ func (s *RoomMgmtService) start() {
 	router.GET("/rooms/:roomid/chats/:fromindex/:toindex", s.getRoomsByRoomidChatRange)
 	// playback
 	router.POST("/playback/rooms/:roomid", s.postPlayback)
-	router.POST("/playback/:playbackid/play", s.postPlaybackPlay)
-	router.POST("/playback/:playbackid/play/:secondsfromstart", s.postPlaybackPlayfrom)
+	router.POST("/playback/:playbackid/speed/:speed/play", s.postPlaybackPlay)
+	router.POST("/playback/:playbackid/speed/:speed/play/:secondsfromstart", s.postPlaybackPlayfrom)
 	router.POST("/playback/:playbackid/pause", s.postPlaybackPause)
 	router.DELETE("/playback/:playbackid", s.deletePlayback)
 
