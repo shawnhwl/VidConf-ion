@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	minio "github.com/minio/minio-go/v7"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
@@ -25,51 +25,31 @@ const (
 )
 
 type TrackEvent struct {
-	timestamp time.Time
-	state     sdk.TrackEvent_State
-	peerId    string
-	tracks    []sdk.TrackInfo
-}
-
-type TrackRemote struct {
-	Id          string
-	StreamID    string
-	PayloadType webrtc.PayloadType
-	Kind        webrtc.RTPCodecType
-	Ssrc        webrtc.SSRC
-	Codec       webrtc.RTPCodecParameters
-	Rid         string
-}
-
-type OnTrack struct {
-	timestamp   time.Time
-	trackId     string
-	trackRemote TrackRemote
+	peerId   string
+	trackIds pq.StringArray
 }
 
 type Track struct {
+	trackId  string
+	mimeType string
+	kind     webrtc.RTPCodecType
+}
+
+type TrackStream struct {
 	Timestamp time.Time
 	Data      []byte
 }
 
 func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 	log.Infof("onRTCTrack track: %+v", track)
-	log.Infof("onRTCTrack receiver: %+v", receiver)
 
-	trackCh := make(chan Track, 128)
+	trackCh := make(chan TrackStream, 128)
 	eofCh := make(chan struct{})
-	go s.insertTracksOnInterval(
-		OnTrack{
-			time.Now(),
+	go s.insertTrackOnInterval(
+		Track{
 			track.ID(),
-			TrackRemote{
-				track.ID(),
-				track.StreamID(),
-				track.PayloadType(),
-				track.Kind(),
-				track.SSRC(),
-				track.Codec(),
-				track.RID()}},
+			track.Codec().MimeType,
+			track.Kind()},
 		trackCh,
 		eofCh)
 
@@ -103,8 +83,21 @@ func (s *RoomRecorderService) onRTCTrack(track *webrtc.TrackRemote, receiver *we
 		}
 		track := make([]byte, readCnt)
 		copy(track, buf)
-		trackCh <- Track{time.Now(), track}
+		trackCh <- TrackStream{time.Now(), track}
 	}
+}
+
+func (s *RoomRecorderService) onRTCTrackEvent(event sdk.TrackEvent) {
+	log.Infof("onRTCTrackEvent: %+v", event)
+	trackIds := make(pq.StringArray, 0)
+	for _, track := range event.Tracks {
+		log.Infof("onTrackEvent: %+v", track)
+		trackIds = append(trackIds, track.Id)
+	}
+	go s.insertTrackEvent(
+		TrackEvent{
+			event.Uid,
+			trackIds})
 }
 
 func (s *RoomRecorderService) onRTCError(err error) {
@@ -112,28 +105,13 @@ func (s *RoomRecorderService) onRTCError(err error) {
 	s.joinRoomCh <- struct{}{}
 }
 
-func (s *RoomRecorderService) onRTCTrackEvent(event sdk.TrackEvent) {
-	log.Infof("onRTCTrackEvent: %+v", event)
-	tracks := make([]sdk.TrackInfo, 0)
-	for _, track := range event.Tracks {
-		log.Infof("onTrackEvent: %+v", track)
-		tracks = append(tracks, *track)
-	}
-	go s.insertTrackEvent(
-		TrackEvent{
-			time.Now(),
-			event.State,
-			event.Uid,
-			tracks})
-}
-
 func (s *RoomRecorderService) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
 	log.Infof("onRoomJoin success = %v, info = %v, err = %v", success, info, err)
 
 	s.roomRTC.OnTrack = s.onRTCTrack
-	s.roomRTC.OnDataChannel = s.onRTCDataChannel
-	s.roomRTC.OnError = s.onRTCError
 	s.roomRTC.OnTrackEvent = s.onRTCTrackEvent
+	s.roomRTC.OnError = s.onRTCError
+	s.roomRTC.OnDataChannel = s.onRTCDataChannel
 	s.roomRTC.OnSpeaker = s.onRTCSpeaker
 
 	err = s.roomRTC.Join(s.roomId, s.systemUid)
@@ -258,10 +236,9 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."trackEvent"(
 					"id",
 					"roomId",
-					"timestamp",
-					"state",
-					"peerId")
-					VALUES($1, $2, $3, $4, $5)`
+					"peerId",
+					"trackIds")
+					VALUES($1, $2, $3, $4)`
 	s.waitUpload.Add(1)
 	defer s.waitUpload.Done()
 	trackEventId := uuid.NewString()
@@ -269,9 +246,8 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 		_, err = s.postgresDB.Exec(insertStmt,
 			trackEventId,
 			s.roomId,
-			trackEvent.timestamp,
-			trackEvent.state,
-			trackEvent.peerId)
+			trackEvent.peerId,
+			trackEvent.trackIds)
 		if err == nil {
 			break
 		}
@@ -284,83 +260,28 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 		log.Errorf("could not insert into database: %s", err)
 		return
 	}
-
-	insertStmt = `INSERT INTO "` + s.roomRecordSchema + `"."trackInfo"(
-					"id",
-					"trackEventId",
-					"roomId",
-					"trackId",
-					"kind",
-					"muted",
-					"type",
-					"streamId",
-					"label",
-					"subscribe",
-					"layer",
-					"direction",
-					"width",
-					"height",
-					"frameRate")
-					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
-	for _, trackInfo := range trackEvent.tracks {
-		dbId := uuid.NewString()
-		for retry := 0; retry < RETRY_COUNT; retry++ {
-			_, err = s.postgresDB.Exec(insertStmt,
-				dbId,
-				trackEventId,
-				s.roomId,
-				trackInfo.Id,
-				trackInfo.Kind,
-				trackInfo.Muted,
-				trackInfo.Type,
-				trackInfo.StreamId,
-				trackInfo.Label,
-				trackInfo.Subscribe,
-				trackInfo.Layer,
-				trackInfo.Direction,
-				trackInfo.Width,
-				trackInfo.Height,
-				trackInfo.FrameRate)
-			if err == nil {
-				break
-			}
-			if strings.Contains(err.Error(), DUP_PK) {
-				dbId = uuid.NewString()
-			}
-			time.Sleep(RETRY_DELAY)
-		}
-		if err != nil {
-			log.Errorf("could not insert into database: %s", err)
-			return
-		}
-	}
-	for id := range trackEvent.tracks {
-		trackEvent.tracks[id] = sdk.TrackInfo{}
-	}
-	trackEvent = TrackEvent{}
 }
 
-func (s *RoomRecorderService) insertTracksOnInterval(
-	onTrack OnTrack,
-	trackCh chan Track,
+func (s *RoomRecorderService) insertTrackOnInterval(
+	track Track,
+	trackCh chan TrackStream,
 	eofCh chan struct{}) {
 
 	s.waitUpload.Add(1)
 	defer s.waitUpload.Done()
-	dbId := s.insertOnTracks(onTrack)
-	trackId := onTrack.trackId
+	dbId := s.insertTrack(track)
+	trackId := track.trackId
 
 	var folderName string
-	if onTrack.trackRemote.Kind == webrtc.RTPCodecTypeAudio {
+	if track.kind == webrtc.RTPCodecTypeAudio {
 		folderName = AUDIO_FOLDERNAME
 	} else {
 		folderName = VIDEO_FOLDERNAME
 	}
-	onTrack.trackRemote = TrackRemote{}
-	onTrack = OnTrack{}
+	track = Track{}
 
 	trackSavedId := 0
-	tracks := make([]Track, 0)
+	tracks := make([]TrackStream, 0)
 	lastSavedTime := time.Now()
 	for {
 		select {
@@ -402,24 +323,21 @@ func (s *RoomRecorderService) insertTracksOnInterval(
 	}
 }
 
-func (s *RoomRecorderService) insertOnTracks(onTrack OnTrack) string {
+func (s *RoomRecorderService) insertTrack(track Track) string {
 	var err error
-	trackRemote, _ := json.Marshal(onTrack.trackRemote)
-	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."onTrack"(
+	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."track"(
 					"id",
 					"roomId",
 					"trackId",
-					"timestamp",
-					"trackRemote")
-					VALUES($1, $2, $3, $4, $5)`
+					"mimeType")
+					VALUES($1, $2, $3, $4)`
 	dbId := uuid.NewString()
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			dbId,
 			s.roomId,
-			onTrack.trackId,
-			onTrack.timestamp,
-			trackRemote)
+			track.trackId,
+			track.mimeType)
 		if err == nil {
 			break
 		}
@@ -435,7 +353,7 @@ func (s *RoomRecorderService) insertOnTracks(onTrack OnTrack) string {
 }
 
 func (s *RoomRecorderService) insertTracks(
-	tracks []Track,
+	tracks []TrackStream,
 	trackID, dbId, folderName string,
 	startId, endId int) {
 
@@ -448,11 +366,10 @@ func (s *RoomRecorderService) insertTracks(
 	var err error
 	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."trackStream"(
 					"id",
-					"onTrackId",
+					"trackId",
 					"roomId",
-					"timestamp",
 					"filePath")
-					VALUES($1, $2, $3, $4, $5)`
+					VALUES($1, $2, $3, $4)`
 	objName := uuid.NewString()
 	filePath := folderName + objName
 	for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -460,7 +377,6 @@ func (s *RoomRecorderService) insertTracks(
 			objName,
 			dbId,
 			s.roomId,
-			tracks[startId].Timestamp,
 			filePath)
 		if err == nil {
 			break
@@ -500,7 +416,7 @@ func (s *RoomRecorderService) insertTracks(
 	}
 	for id := startId; id < endId; id++ {
 		tracks[id].Data = nil
-		tracks[id] = Track{}
+		tracks[id] = TrackStream{}
 	}
 	log.Infof("successfully uploaded bytes: ", uploadInfo)
 }

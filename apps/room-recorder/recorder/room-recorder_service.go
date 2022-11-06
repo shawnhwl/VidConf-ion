@@ -225,11 +225,11 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "room"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."room"(
-		"id"        UUID PRIMARY KEY,
-		"name"      TEXT NOT NULL,
-		"startTime" TIMESTAMPTZ NOT NULL,
-		"endTime"   TIMESTAMPTZ NOT NULL,
-		CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
+					"id"        UUID PRIMARY KEY,
+					"name"      TEXT NOT NULL,
+					"startTime" TIMESTAMPTZ NOT NULL,
+					"endTime"   TIMESTAMPTZ NOT NULL,
+					CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -241,13 +241,11 @@ func getPostgresDB(config Config) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
-	// create table "trackEvent"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackEvent"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"state"        INT NOT NULL,
-					"peerId"       TEXT NOT NULL,
+					"id"        UUID PRIMARY KEY,
+					"roomId"    UUID NOT NULL,
+					"peerId"    TEXT NOT NULL,
+					"trackIds"  TEXT ARRAY NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -260,43 +258,12 @@ func getPostgresDB(config Config) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
-	// create table "trackInfo"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackInfo"(
-					"id"           UUID PRIMARY KEY,
-					"trackEventId" UUID NOT NULL,
-					"roomId"       UUID NOT NULL,
-					"trackId"      TEXT NOT NULL,
-					"kind"         TEXT NOT NULL,
-					"muted"        BOOL NOT NULL,
-					"type"         INT NOT NULL,
-					"streamId"     TEXT NOT NULL,
-					"label"        TEXT NOT NULL,
-					"subscribe"    BOOL NOT NULL,
-					"layer"        TEXT NOT NULL,
-					"direction"    TEXT NOT NULL,
-					"width"        INT NOT NULL,
-					"height"       INT NOT NULL,
-					"frameRate"    INT NOT NULL,
-					CONSTRAINT fk_trackEvent FOREIGN KEY("trackEventId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."trackEvent"("id") ON DELETE CASCADE,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "onTrack"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."onTrack"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"trackId"      TEXT NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"trackRemote"  JSON NOT NULL,
+	// create table "track"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."track"(
+					"id"       UUID PRIMARY KEY,
+					"roomId"   UUID NOT NULL,
+					"trackId"  TEXT NOT NULL,
+					"mimeType" TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -311,12 +278,11 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "trackStream"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackStream"(
-					"id"          UUID PRIMARY KEY,
-					"onTrackId"   UUID NOT NULL,
-					"roomId"      UUID NOT NULL,
-					"timestamp"   TIMESTAMPTZ NOT NULL,
-					"filePath"    TEXT NOT NULL,
-					CONSTRAINT fk_onTrack FOREIGN KEY("onTrackId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."onTrack"("id") ON DELETE CASCADE,
+					"id"       UUID PRIMARY KEY,
+					"trackId"  UUID NOT NULL,
+					"roomId"   UUID NOT NULL,
+					"filePath" TEXT NOT NULL,
+					CONSTRAINT fk_track FOREIGN KEY("trackId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."track"("id") ON DELETE CASCADE,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)

@@ -287,11 +287,11 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "room"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."room"(
-		"id"        UUID PRIMARY KEY,
-		"name"      TEXT NOT NULL,
-		"startTime" TIMESTAMPTZ NOT NULL,
-		"endTime"   TIMESTAMPTZ NOT NULL,
-		CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
+					"id"        UUID PRIMARY KEY,
+					"name"      TEXT NOT NULL,
+					"startTime" TIMESTAMPTZ NOT NULL,
+					"endTime"   TIMESTAMPTZ NOT NULL,
+					CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {

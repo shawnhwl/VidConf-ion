@@ -10,7 +10,7 @@ level = "info"
 url = "nats://127.0.0.1:4222"
 
 [postgres]
-addr = "localhost:5432"
+addr = "vidconf:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
@@ -18,7 +18,7 @@ roomMgmtSchema = "room-mgmt"
 roomRecordSchema = "room-recorder"
 
 [minio]
-endpoint = "localhost:9000"
+endpoint = "vidconf:9000"
 useSSL = false
 username = "minioadmin"
 password = "minioadmin"
@@ -26,16 +26,16 @@ bucketName = "vidconf"
 
 [signal]
 # The addr for grpc signalling
-addr = "localhost:5551"
+addr = "vidconf:5551"
 
 [recorder]
 # The address the monitoring server will listen on.
 addr = "0.0.0.0:7081"
 # Roomid to record session
-roomid = "efcc3ad6-de93-4223-b18e-df964d94e9ca"
+roomid = "28c709c3-a97d-409a-b03f-17d75d7e8b54"
 # time in seconds per chopped section
 choppedInSeconds = 5
 # UserId and UserName used by system to join the room sessions
 # Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
-systemUserId = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2-1"
+systemUserId = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
 systemUsername = "Public Announcements"

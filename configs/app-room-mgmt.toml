@@ -15,7 +15,7 @@ password = ""
 db = 0
 
 [postgres]
-addr = "localhost:5432"
+addr = "vidconf:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
@@ -23,7 +23,7 @@ roomMgmtSchema = "room-mgmt"
 roomRecordSchema = "room-recorder"
 
 [minio]
-endpoint = "localhost:9000"
+endpoint = "vidconf:9000"
 useSSL = false
 username = "minioadmin"
 password = "minioadmin"
@@ -31,11 +31,11 @@ bucketName = "vidconf"
 
 [signal]
 # The addr for grpc signalling
-addr = "localhost:5551"
+addr = "vidconf:5551"
 
 [roomsentry]
 # The addr for roomsentry
-url = "http://localhost:7073"
+url = "http://vidconf:7073"
 
 [roommgmt]
 # The address the HTTP server will listen on.

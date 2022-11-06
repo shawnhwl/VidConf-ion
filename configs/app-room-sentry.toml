@@ -10,7 +10,7 @@ level = "info"
 url = "nats://127.0.0.1:4222"
 
 [postgres]
-addr = "localhost:5432"
+addr = "vidconf:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
@@ -19,7 +19,7 @@ roomRecordSchema = "room-recorder"
 
 [signal]
 # The addr for grpc signalling
-addr = "localhost:5551"
+addr = "vidconf:5551"
 
 [roomsentry]
 # Polling interval for StartTime, EndTime and AnnounceTime

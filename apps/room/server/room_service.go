@@ -185,14 +185,34 @@ func getPostgresDB(config Config) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
+	// create table "peerEvent"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."peerEvent"(
+					"id"        UUID PRIMARY KEY,
+					"roomId"    UUID NOT NULL,
+					"timestamp" TIMESTAMPTZ NOT NULL,
+					"state"     INT NOT NULL,
+					"peerId"    TEXT NOT NULL,
+					"peerName"  TEXT NOT NULL,
+					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
 	// create table "chatMessage"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"userId"       TEXT NOT NULL,
-					"userName"     TEXT NOT NULL,
-					"text"         TEXT NOT NULL,
+					"id"        UUID PRIMARY KEY,
+					"roomId"    UUID NOT NULL,
+					"timestamp" TIMESTAMPTZ NOT NULL,
+					"userId"    TEXT NOT NULL,
+					"userName"  TEXT NOT NULL,
+					"text"      TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -207,35 +227,15 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "chatAttachment"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"userId"       TEXT NOT NULL,
-					"userName"     TEXT NOT NULL,
-					"fileName"     TEXT NOT NULL,
-					"fileSize"     INT NOT NULL,
-					"filePath"     TEXT NOT NULL,
+					"id"        UUID PRIMARY KEY,
+					"roomId"    UUID NOT NULL,
+					"timestamp" TIMESTAMPTZ NOT NULL,
+					"userId"    TEXT NOT NULL,
+					"userName"  TEXT NOT NULL,
+					"fileName"  TEXT NOT NULL,
+					"fileSize"  INT NOT NULL,
+					"filePath"  TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "peerEvent"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."peerEvent"(
-						"id"           UUID PRIMARY KEY,
-						"roomId"       UUID NOT NULL,
-						"timestamp"    TIMESTAMPTZ NOT NULL,
-						"state"        INT NOT NULL,
-						"peerId"       TEXT NOT NULL,
-						"peerName"     TEXT NOT NULL,
-		CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {

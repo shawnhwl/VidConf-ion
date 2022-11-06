@@ -265,7 +265,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 																	"createdAt",
 																	"updatedBy",
 																	"updatedAt")
-					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			room.id,
@@ -275,7 +275,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 			"",
 			room.startTime,
 			room.endTime,
-			pq.Array(room.allowedUserId),
+			room.allowedUserId,
 			room.earlyEndReason,
 			room.createdBy,
 			room.createdAt,
@@ -935,7 +935,7 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 																		"name",
 																		"httpEndpoint",
 																		"signalEndpoint")
-					VALUES($1, $2, $3, $4)`
+					VALUES($1, $2, $3, $4, $5)`
 	playbackId := s.getPlaybackUuid(true)
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name, "", "")
@@ -971,12 +971,12 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
 		return
 	}
-	endpoint, err := s.queryPlayback(playbackId, c)
+	httpEndpoint, err := s.queryPlayback(playbackId, c)
 	if err != nil {
 		return
 	}
 
-	err = s.httpPost(endpoint + "/" + speed)
+	err = s.httpPost(httpEndpoint + "/" + speed)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -1005,12 +1005,12 @@ func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-integer skip interval"})
 		return
 	}
-	endpoint, err := s.queryPlayback(playbackId, c)
+	httpEndpoint, err := s.queryPlayback(playbackId, c)
 	if err != nil {
 		return
 	}
 
-	err = s.httpPost(endpoint + "/" + speed + "/" + secondsFromStart)
+	err = s.httpPost(httpEndpoint + "/" + speed + "/" + secondsFromStart)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -1027,12 +1027,12 @@ func (s *RoomMgmtService) postPlaybackPause(c *gin.Context) {
 		return
 	}
 
-	endpoint, err := s.queryPlayback(playbackId, c)
+	httpEndpoint, err := s.queryPlayback(playbackId, c)
 	if err != nil {
 		return
 	}
 
-	err = s.httpPost(endpoint + "/pause")
+	err = s.httpPost(httpEndpoint + "/pause")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -2219,12 +2219,12 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "chatMessage"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"userId"       TEXT NOT NULL,
-					"userName"     TEXT NOT NULL,
-					"text"         TEXT NOT NULL,
+					"id"        UUID PRIMARY KEY,
+					"roomId"    UUID NOT NULL,
+					"timestamp" TIMESTAMPTZ NOT NULL,
+					"userId"    TEXT NOT NULL,
+					"userName"  TEXT NOT NULL,
+					"text"      TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
@@ -2239,14 +2239,14 @@ func getPostgresDB(config Config) *sql.DB {
 	}
 	// create table "chatAttachment"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"userId"       TEXT NOT NULL,
-					"userName"     TEXT NOT NULL,
-					"fileName"     TEXT NOT NULL,
-					"fileSize"     INT NOT NULL,
-					"filePath"     TEXT NOT NULL,
+					"id"        UUID PRIMARY KEY,
+					"roomId"    UUID NOT NULL,
+					"timestamp" TIMESTAMPTZ NOT NULL,
+					"userId"    TEXT NOT NULL,
+					"userName"  TEXT NOT NULL,
+					"fileName"  TEXT NOT NULL,
+					"fileSize"  INT NOT NULL,
+					"filePath"  TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)

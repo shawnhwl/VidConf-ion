@@ -42,5 +42,4 @@ func main() {
 	// Press Ctrl+C to exit the process
 	signal.Notify(quitCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	<-quitCh
-	// s.quitCh <- syscall.SIGTERM
 }
