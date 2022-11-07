@@ -8,6 +8,7 @@ import (
 	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
+	postgresService "github.com/pion/ion/apps/postgres"
 	"github.com/pion/ion/pkg/ion"
 	"github.com/pion/ion/pkg/proto"
 	"github.com/pion/ion/pkg/runner"
@@ -28,15 +29,6 @@ type NatsConf struct {
 	URL string `mapstructure:"url"`
 }
 
-type PostgresConf struct {
-	Addr             string `mapstructure:"addr"`
-	User             string `mapstructure:"user"`
-	Password         string `mapstructure:"password"`
-	Database         string `mapstructure:"database"`
-	RoomMgmtSchema   string `mapstructure:"roomMgmtSchema"`
-	RoomRecordSchema string `mapstructure:"roomRecordSchema"`
-}
-
 type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
@@ -50,12 +42,12 @@ type RoomSentryConf struct {
 }
 
 type Config struct {
-	Global     GlobalConf     `mapstructure:"global"`
-	Log        LogConf        `mapstructure:"log"`
-	Nats       NatsConf       `mapstructure:"nats"`
-	Postgres   PostgresConf   `mapstructure:"postgres"`
-	Signal     SignalConf     `mapstructure:"signal"`
-	RoomSentry RoomSentryConf `mapstructure:"roomsentry"`
+	Global     GlobalConf                   `mapstructure:"global"`
+	Log        LogConf                      `mapstructure:"log"`
+	Nats       NatsConf                     `mapstructure:"nats"`
+	Postgres   postgresService.PostgresConf `mapstructure:"postgres"`
+	Signal     SignalConf                   `mapstructure:"signal"`
+	RoomSentry RoomSentryConf               `mapstructure:"roomsentry"`
 }
 
 func unmarshal(rawVal interface{}) error {

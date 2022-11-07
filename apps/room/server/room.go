@@ -19,6 +19,8 @@ import (
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 
+	minioService "github.com/pion/ion/apps/minio"
+	postgresService "github.com/pion/ion/apps/postgres"
 	room "github.com/pion/ion/apps/room/proto"
 	"github.com/pion/ion/pkg/db"
 	"github.com/pion/ion/pkg/ion"
@@ -41,23 +43,6 @@ type natsConf struct {
 	URL string `mapstructure:"url"`
 }
 
-type PostgresConf struct {
-	Addr             string `mapstructure:"addr"`
-	User             string `mapstructure:"user"`
-	Password         string `mapstructure:"password"`
-	Database         string `mapstructure:"database"`
-	RoomMgmtSchema   string `mapstructure:"roomMgmtSchema"`
-	RoomRecordSchema string `mapstructure:"roomRecordSchema"`
-}
-
-type MinioConf struct {
-	Endpoint        string `mapstructure:"endpoint"`
-	UseSSL          bool   `mapstructure:"useSSL"`
-	AccessKeyID     string `mapstructure:"username"`
-	SecretAccessKey string `mapstructure:"password"`
-	BucketName      string `mapstructure:"bucketName"`
-}
-
 type RoomMgmtConf struct {
 	ReservedUsernames []string `mapstructure:"reserved_usernames"`
 	SystemUserId      string   `mapstructure:"systemUserId"`
@@ -67,13 +52,13 @@ type RoomMgmtConf struct {
 // Config for room node
 type Config struct {
 	runner.ConfigBase
-	Global   global       `mapstructure:"global"`
-	Log      logConf      `mapstructure:"log"`
-	Nats     natsConf     `mapstructure:"nats"`
-	Redis    db.Config    `mapstructure:"redis"`
-	Postgres PostgresConf `mapstructure:"postgres"`
-	Minio    MinioConf    `mapstructure:"minio"`
-	RoomMgmt RoomMgmtConf `mapstructure:"roommgmt"`
+	Global   global                       `mapstructure:"global"`
+	Log      logConf                      `mapstructure:"log"`
+	Nats     natsConf                     `mapstructure:"nats"`
+	Redis    db.Config                    `mapstructure:"redis"`
+	Postgres postgresService.PostgresConf `mapstructure:"postgres"`
+	Minio    minioService.MinioConf       `mapstructure:"minio"`
+	RoomMgmt RoomMgmtConf                 `mapstructure:"roommgmt"`
 }
 
 func unmarshal(rawVal interface{}) error {

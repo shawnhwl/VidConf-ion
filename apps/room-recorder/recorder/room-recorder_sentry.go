@@ -94,7 +94,7 @@ func (s *RoomRecorderService) onRTCTrackEvent(event sdk.TrackEvent) {
 	}
 	trackIds := make(pq.StringArray, 0)
 	for _, track := range event.Tracks {
-		log.Infof("onTrackEvent: %+v", track)
+		log.Infof("onRTCTrackEvent: %+v", track)
 		trackIds = append(trackIds, track.Id)
 	}
 	go s.insertTrackEvent(

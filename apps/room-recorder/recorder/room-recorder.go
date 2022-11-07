@@ -9,6 +9,8 @@ import (
 	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
+	minioService "github.com/pion/ion/apps/minio"
+	postgresService "github.com/pion/ion/apps/postgres"
 	"github.com/pion/ion/pkg/ion"
 	"github.com/pion/ion/pkg/proto"
 	"github.com/pion/ion/pkg/runner"
@@ -29,23 +31,6 @@ type NatsConf struct {
 	URL string `mapstructure:"url"`
 }
 
-type PostgresConf struct {
-	Addr             string `mapstructure:"addr"`
-	User             string `mapstructure:"user"`
-	Password         string `mapstructure:"password"`
-	Database         string `mapstructure:"database"`
-	RoomMgmtSchema   string `mapstructure:"roomMgmtSchema"`
-	RoomRecordSchema string `mapstructure:"roomRecordSchema"`
-}
-
-type MinioConf struct {
-	Endpoint        string `mapstructure:"endpoint"`
-	UseSSL          bool   `mapstructure:"useSSL"`
-	AccessKeyID     string `mapstructure:"username"`
-	SecretAccessKey string `mapstructure:"password"`
-	BucketName      string `mapstructure:"bucketName"`
-}
-
 type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
@@ -59,13 +44,13 @@ type RecorderConf struct {
 }
 
 type Config struct {
-	Global   GlobalConf   `mapstructure:"global"`
-	Log      LogConf      `mapstructure:"log"`
-	Nats     NatsConf     `mapstructure:"nats"`
-	Postgres PostgresConf `mapstructure:"postgres"`
-	Minio    MinioConf    `mapstructure:"minio"`
-	Signal   SignalConf   `mapstructure:"signal"`
-	Recorder RecorderConf `mapstructure:"recorder"`
+	Global   GlobalConf                   `mapstructure:"global"`
+	Log      LogConf                      `mapstructure:"log"`
+	Nats     NatsConf                     `mapstructure:"nats"`
+	Postgres postgresService.PostgresConf `mapstructure:"postgres"`
+	Minio    minioService.MinioConf       `mapstructure:"minio"`
+	Signal   SignalConf                   `mapstructure:"signal"`
+	Recorder RecorderConf                 `mapstructure:"recorder"`
 }
 
 func unmarshal(rawVal interface{}) error {
