@@ -5,92 +5,35 @@ import (
 	"context"
 	"database/sql"
 	"encoding/gob"
-	"encoding/json"
 	"os"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	minio "github.com/minio/minio-go/v7"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
-	room "github.com/pion/ion/apps/room/proto"
 	"github.com/pion/webrtc/v3"
 )
 
-type PeerEvent struct {
-	timestamp time.Time
-	state     room.PeerState
-}
-
-type PeerEvents []PeerEvent
-
-func (p PeerEvents) Len() int {
-	return len(p)
-}
-
-func (p PeerEvents) Less(i, j int) bool {
-	return p[i].timestamp.Before(p[j].timestamp)
-}
-
-func (p PeerEvents) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
-}
-
-type TrackEvent struct {
-	timestamp time.Time
-	state     room.PeerState
-	tracks    []sdk.TrackInfo
-}
-
-type TrackEvents []TrackEvent
-
-func (p TrackEvents) Len() int {
-	return len(p)
-}
-
-func (p TrackEvents) Less(i, j int) bool {
-	return p[i].timestamp.Before(p[j].timestamp)
-}
-
-func (p TrackEvents) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
-}
-
-type TrackRemote struct {
-	Id          string
-	StreamID    string
-	PayloadType webrtc.PayloadType
-	Kind        webrtc.RTPCodecType
-	Ssrc        webrtc.SSRC
-	Codec       webrtc.RTPCodecParameters
-	Rid         string
-}
-
-type OnTrack struct {
-	id          string
-	timestamp   time.Time
-	trackId     string
-	trackRemote TrackRemote
-}
-
-type Track struct {
+type TrackStream struct {
 	Timestamp time.Time
 	Data      []byte
 }
 
-type Tracks []Track
+type TrackStreams []TrackStream
 
-func (p Tracks) Len() int {
+func (p TrackStreams) Len() int {
 	return len(p)
 }
 
-func (p Tracks) Less(i, j int) bool {
+func (p TrackStreams) Less(i, j int) bool {
 	return p[i].Timestamp.Before(p[j].Timestamp)
 }
 
-func (p Tracks) Swap(i, j int) {
+func (p TrackStreams) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }
 
@@ -106,11 +49,11 @@ type PlaybackPeer struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	roomId        string
-	playbackId    string
-	peerId        string
-	peerName      string
-	roomStartTime time.Time
+	roomId         string
+	playbackId     string
+	peerId         string
+	peerName       string
+	orphanRemoteId string
 
 	joinRoomCh     chan struct{}
 	isSdkConnected bool
@@ -119,16 +62,16 @@ type PlaybackPeer struct {
 	roomService  *sdk.Room
 	roomRTC      *sdk.RTC
 
-	peerEvents   PeerEvents
-	peerEventId  int
-	trackEvents  TrackEvents
-	trackEventId int
-	onTracks     map[string]OnTrack
-	tracks       map[string]Tracks
-	trackId      map[string]int
+	trackStreams    map[string]TrackStreams
+	lenTrackStreams map[string]int
+	trackStreamIds  map[string]int
+	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
+	trackCh         []chan Ctrl
+
+	ctrlCh chan Ctrl
 }
 
-func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName string) *PlaybackPeer {
+func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName, orphanRemoteId string) *PlaybackPeer {
 	p := &PlaybackPeer{
 		conf:     s.conf,
 		waitPeer: s.waitPeer,
@@ -140,24 +83,26 @@ func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName string) *Playback
 		minioClient: s.minioClient,
 		bucketName:  s.bucketName,
 
-		roomId:        s.roomId,
-		playbackId:    s.playbackId,
-		peerId:        peerId,
-		peerName:      peerName,
-		roomStartTime: s.roomStartTime,
+		roomId:         s.roomId,
+		playbackId:     s.playbackId,
+		peerId:         peerId,
+		peerName:       peerName,
+		orphanRemoteId: orphanRemoteId,
 
 		joinRoomCh:     make(chan struct{}, 32),
 		isSdkConnected: true,
 
-		peerEvents:   make(PeerEvents, 0),
-		peerEventId:  0,
-		trackEvents:  make(TrackEvents, 0),
-		trackEventId: 0,
-		onTracks:     make(map[string]OnTrack),
-		tracks:       make(map[string]Tracks),
-		trackId:      make(map[string]int),
+		trackStreams:    make(map[string]TrackStreams),
+		lenTrackStreams: make(map[string]int),
+		trackStreamIds:  make(map[string]int),
+		trackLocals:     make(map[string]*webrtc.TrackLocalStaticRTP),
+		trackCh:         make([]chan Ctrl, 0),
+
+		ctrlCh: make(chan Ctrl, 32),
 	}
+
 	go p.preparePlaybackPeer()
+	go p.start()
 	return p
 }
 
@@ -165,161 +110,66 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 	p.waitPeer.Add(1)
 	defer p.waitPeer.Done()
 
-	var err error
-	var peerEventRows *sql.Rows
-	queryStmt := `SELECT "timestamp", "state"
-					FROM "` + p.roomRecordSchema + `"."peerEvent"
-					WHERE "roomId"=$1 AND "peerId"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		peerEventRows, err = p.postgresDB.Query(queryStmt, p.roomId, p.peerId)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
+	if p.orphanRemoteId != "" {
+		p.preparePlaybackOrphan()
+		return
 	}
-	if err != nil {
-		log.Errorf("could not query database: %s", err)
-		os.Exit(1)
-	}
-	defer peerEventRows.Close()
-	for peerEventRows.Next() {
-		var peerEvent PeerEvent
-		err := peerEventRows.Scan(&peerEvent.timestamp, &peerEvent.state)
-		if err != nil {
-			log.Errorf("could not query database: %s", err)
-			os.Exit(1)
-		}
-		p.peerEvents = append(p.peerEvents, peerEvent)
-	}
-	sort.Sort(p.peerEvents)
 
-	var trackEventRows *sql.Rows
-	queryStmt = `SELECT "id", "timestamp", "state"
+	log.Infof("preparePlaybackPeer peerId '%s'", p.peerId)
+	var err error
+	var trackEventRow *sql.Row
+	queryStmt := `SELECT "trackRemoteIds"
 					FROM "` + p.roomRecordSchema + `"."trackEvent"
 					WHERE "roomId"=$1 AND "peerId"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
-		trackEventRows, err = p.postgresDB.Query(queryStmt, p.roomId, p.peerId)
-		if err == nil {
+		trackEventRow = p.postgresDB.QueryRow(queryStmt, p.roomId, p.peerId)
+		if trackEventRow.Err() == nil {
 			break
 		}
 		time.Sleep(RETRY_DELAY)
 	}
-	if err != nil {
-		log.Errorf("could not query database: %s", err)
+	if trackEventRow.Err() != nil {
+		log.Errorf("could not query database: %s", trackEventRow.Err().Error())
 		os.Exit(1)
 	}
-	defer trackEventRows.Close()
-	for trackEventRows.Next() {
-		var trackEventId string
-		var trackEvent TrackEvent
-		err := trackEventRows.Scan(&trackEventId,
-			&trackEvent.timestamp,
-			&trackEvent.state)
-		if err != nil {
-			log.Errorf("could not query database: %s", err)
-			os.Exit(1)
-		}
-		trackEvent.tracks = make([]sdk.TrackInfo, 0)
-		var trackInfoRows *sql.Rows
-		queryStmt = `SELECT "trackId",
-							"kind",
-							"muted",
-							"type",
-							"streamId",
-							"label",
-							"subscribe",
-							"layer",
-							"direction",
-							"width",
-							"height",
-							"frameRate"
-						FROM "` + p.roomRecordSchema + `"."trackInfo"
-						WHERE "roomId"=$1 AND "trackEventId"=$2`
+	var trackRemoteIds pq.StringArray
+	err = trackEventRow.Scan(&trackRemoteIds)
+	if err != nil {
+		log.Errorf("could not query database: %s", trackEventRow.Err().Error())
+		os.Exit(1)
+	}
+	for _, trackRemoteId := range trackRemoteIds {
+		var trackRow *sql.Row
+		queryStmt = `SELECT "id", "mimeType"
+						FROM "` + p.roomRecordSchema + `"."track"
+						WHERE "roomId"=$1 AND "trackRemoteId"=$2`
 		for retry := 0; retry < RETRY_COUNT; retry++ {
-			trackInfoRows, err = p.postgresDB.Query(queryStmt,
-				p.roomId,
-				trackEventId)
-			if err == nil {
+			trackRow = p.postgresDB.QueryRow(queryStmt, p.roomId, trackRemoteId)
+			if trackRow.Err() == nil {
 				break
 			}
 			time.Sleep(RETRY_DELAY)
 		}
-		if err != nil {
-			log.Errorf("could not query database: %s", err)
+		if trackRow.Err() != nil {
+			log.Errorf("could not query database: %s", trackRow.Err().Error())
 			os.Exit(1)
 		}
-		defer trackInfoRows.Close()
-		for trackInfoRows.Next() {
-			var track sdk.TrackInfo
-			err := trackInfoRows.Scan(&track.Id,
-				&track.Kind,
-				&track.Muted,
-				&track.Type,
-				&track.StreamId,
-				&track.Label,
-				&track.Subscribe,
-				&track.Layer,
-				&track.Direction,
-				&track.Width,
-				&track.Height,
-				&track.FrameRate)
-			if err != nil {
-				log.Errorf("could not query database: %s", err)
-				os.Exit(1)
-			}
-			trackEvent.tracks = append(trackEvent.tracks, track)
+		var trackId string
+		var mimeType string
+		err = trackRow.Scan(&trackId, &mimeType)
+		if err != nil {
+			log.Errorf("could not query database: %s", trackRow.Err().Error())
+			os.Exit(1)
 		}
-		p.trackEvents = append(p.trackEvents, trackEvent)
-	}
-	sort.Sort(p.trackEvents)
 
-	for _, trackEvent := range p.trackEvents {
-		for _, track := range trackEvent.tracks {
-			var onTrackRows *sql.Rows
-			queryStmt = `SELECT "id",
-								"trackId",
-								"timestamp",
-								"trackRemote"
-							FROM "` + p.roomRecordSchema + `"."onTrack"
-							WHERE "roomId"=$1 AND "trackId"=$2`
-			for retry := 0; retry < RETRY_COUNT; retry++ {
-				onTrackRows, err = p.postgresDB.Query(queryStmt, p.roomId, track.Id)
-				if err == nil {
-					break
-				}
-				time.Sleep(RETRY_DELAY)
-			}
-			if err != nil {
-				log.Errorf("could not query database: %s", err)
-				os.Exit(1)
-			}
-			defer onTrackRows.Close()
-			for onTrackRows.Next() {
-				var onTrack OnTrack
-				var trackRemote string
-				err := onTrackRows.Scan(&onTrack.id,
-					&onTrack.trackId,
-					&onTrack.timestamp,
-					&trackRemote)
-				if err != nil {
-					log.Errorf("could not query database: %s", err)
-					os.Exit(1)
-				}
-				json.Unmarshal([]byte(trackRemote), &onTrack.trackRemote)
-				p.onTracks[track.Id] = onTrack
-			}
-		}
-	}
-
-	for key := range p.onTracks {
-		var trackRows *sql.Rows
+		var trackStreamRows *sql.Rows
 		queryStmt = `SELECT "filePath"
 						FROM "` + p.roomRecordSchema + `"."trackStream"
-						WHERE "roomId"=$1 AND "onTrackId"=$2`
+						WHERE "roomId"=$1 AND "trackId"=$2`
 		for retry := 0; retry < RETRY_COUNT; retry++ {
-			trackRows, err = p.postgresDB.Query(queryStmt,
+			trackStreamRows, err = p.postgresDB.Query(queryStmt,
 				p.roomId,
-				p.onTracks[key].id)
+				trackId)
 			if err == nil {
 				break
 			}
@@ -329,11 +179,11 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 			log.Errorf("could not query database: %s", err)
 			os.Exit(1)
 		}
-		defer trackRows.Close()
-		tracks := make(Tracks, 0)
-		for trackRows.Next() {
+		defer trackStreamRows.Close()
+		trackStreams := make(TrackStreams, 0)
+		for trackStreamRows.Next() {
 			var filePath string
-			err := trackRows.Scan(&filePath)
+			err := trackStreamRows.Scan(&filePath)
 			if err != nil {
 				log.Errorf("could not query database: %s", err)
 				os.Exit(1)
@@ -352,52 +202,193 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 				log.Errorf("could not process download: %s", err)
 				continue
 			}
-			var trackData Tracks
-			gob.NewDecoder(buf).Decode(&trackData)
-			tracks = append(tracks, trackData...)
+			var trackStream TrackStreams
+			gob.NewDecoder(buf).Decode(&trackStream)
+			trackStreams = append(trackStreams, trackStream...)
 		}
-		sort.Sort(tracks)
-		p.tracks[key] = tracks
+		sort.Sort(trackStreams)
+		p.trackStreams[trackId] = trackStreams
+		p.lenTrackStreams[trackId] = len(trackStreams)
+		p.trackLocals[trackId], err = webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: mimeType},
+			mimeType+uuid.NewString(),
+			p.peerId)
+		if err != nil {
+			log.Errorf("error creating TrackLocal: %s", err.Error())
+			continue
+		}
+		trackCh := make(chan Ctrl, 32)
+		p.trackCh = append(p.trackCh, trackCh)
+		go p.sendTrack(trackId, trackCh)
 	}
 
 	log.Infof("preparePlaybackPeer peerId '%s' completed", p.peerId)
 }
 
-func (p *PlaybackPeer) Start(exitCh chan struct{}) {
+func (p *PlaybackPeer) preparePlaybackOrphan() {
+	log.Infof("preparePlaybackPeer orphanRemoteId '%s'", p.orphanRemoteId)
+	var err error
+	var trackRow *sql.Row
+	queryStmt := `SELECT "id", "mimeType"
+						FROM "` + p.roomRecordSchema + `"."track"
+						WHERE "roomId"=$1 AND "trackRemoteId"=$2`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		trackRow = p.postgresDB.QueryRow(queryStmt, p.roomId, p.orphanRemoteId)
+		if trackRow.Err() == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if trackRow.Err() != nil {
+		log.Errorf("could not query database: %s", trackRow.Err().Error())
+		os.Exit(1)
+	}
+	var trackId string
+	var mimeType string
+	err = trackRow.Scan(&trackId, &mimeType)
+	if err != nil {
+		log.Errorf("could not query database: %s", trackRow.Err().Error())
+		os.Exit(1)
+	}
+
+	var trackStreamRows *sql.Rows
+	queryStmt = `SELECT "filePath"
+						FROM "` + p.roomRecordSchema + `"."trackStream"
+						WHERE "roomId"=$1 AND "trackId"=$2`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		trackStreamRows, err = p.postgresDB.Query(queryStmt,
+			p.roomId,
+			trackId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("could not query database: %s", err)
+		os.Exit(1)
+	}
+	defer trackStreamRows.Close()
+	trackStreams := make(TrackStreams, 0)
+	for trackStreamRows.Next() {
+		var filePath string
+		err := trackStreamRows.Scan(&filePath)
+		if err != nil {
+			log.Errorf("could not query database: %s", err)
+			os.Exit(1)
+		}
+		object, err := p.minioClient.GetObject(context.Background(),
+			p.bucketName,
+			p.roomId+filePath,
+			minio.GetObjectOptions{})
+		if err != nil {
+			log.Errorf("could not download attachment: %s", err)
+			continue
+		}
+		buf := new(bytes.Buffer)
+		_, err = buf.ReadFrom(object)
+		if err != nil {
+			log.Errorf("could not process download: %s", err)
+			continue
+		}
+		var trackStream TrackStreams
+		gob.NewDecoder(buf).Decode(&trackStream)
+		trackStreams = append(trackStreams, trackStream...)
+	}
+	sort.Sort(trackStreams)
+	p.trackStreams[trackId] = trackStreams
+	p.lenTrackStreams[trackId] = len(trackStreams)
+	p.trackLocals[trackId], err = webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: mimeType},
+		mimeType+uuid.NewString(),
+		p.peerId)
+	if err != nil {
+		log.Errorf("error creating TrackLocal: %s", err.Error())
+		return
+	}
+	trackCh := make(chan Ctrl, 32)
+	p.trackCh = append(p.trackCh, trackCh)
+	go p.sendTrack(trackId, trackCh)
+
+	log.Infof("preparePlaybackPeer orphanRemoteId '%s' completed", p.orphanRemoteId)
+}
+
+func (p *PlaybackPeer) start() {
 	p.joinRoomCh <- struct{}{}
 	for {
 		select {
-		case <-exitCh:
-			return
+		case ctrl := <-p.ctrlCh:
+			for id := range p.trackCh {
+				p.trackCh[id] <- ctrl
+			}
 		case <-p.joinRoomCh:
 			if p.isSdkConnected {
 				p.isSdkConnected = false
 				go p.openRoom()
 			}
 		default:
-			time.Sleep(time.Microsecond)
-			// send stream
+			time.Sleep(time.Nanosecond)
 		}
 	}
 }
 
-func (p *PlaybackPeer) sendTrack(track *webrtc.TrackLocalStaticRTP, key string) {
-	trackData := p.tracks[key]
-	lastTick := time.Time{}
-	for id := range trackData {
-		if id != 0 {
-			for {
-				if 4*time.Since(lastTick) > trackData[id].Timestamp.Sub(trackData[id-1].Timestamp) {
-					break
+func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
+	var isRunning bool = false
+	var speed10 time.Duration
+	var playbackRefTime time.Time
+	var actualRefTime time.Time
+	trackIdx := 0
+	maxTrackIdx := p.lenTrackStreams[key]
+	trackStreams := p.trackStreams[key]
+	name := PLAYBACK_PREFIX + p.peerName
+	if p.orphanRemoteId != "" {
+		name = "orphanId"
+	}
+	name = name + "/" + p.trackLocals[key].Codec().MimeType + "/'" + key + "'"
+
+	for {
+		select {
+		case ctrl := <-trackCh:
+			if ctrl.isPaused {
+				isRunning = false
+			} else {
+				isRunning = true
+				speed10 = ctrl.speed10
+				playbackRefTime = ctrl.playbackRefTime
+				actualRefTime = ctrl.actualRefTime
+				trackIdx = 0
+				for ; trackIdx < maxTrackIdx; trackIdx++ {
+					if trackStreams[trackIdx].Timestamp.After(playbackRefTime) {
+						break
+					}
 				}
-				time.Sleep(time.Nanosecond)
+			}
+			log.Infof(`%s\n 
+						isRunning=%v speed=%v/%v\n
+						playbackRefTime=%s\n
+						actualRefTime=%s\n
+						trackIdx=%d/%d\n
+						timeStamp=%s`,
+				name,
+				isRunning, speed10, PLAYBACK_SPEED10,
+				playbackRefTime,
+				actualRefTime,
+				trackIdx, maxTrackIdx,
+				trackStreams[0].Timestamp)
+		default:
+			time.Sleep(time.Nanosecond)
+			if isRunning && trackIdx < maxTrackIdx {
+				if speed10*time.Since(actualRefTime) >
+					PLAYBACK_SPEED10*trackStreams[trackIdx].Timestamp.Sub(playbackRefTime) {
+					_, err := p.trackLocals[key].Write(trackStreams[trackIdx].Data)
+					if err != nil {
+						log.Errorf("send err: %s", err.Error())
+					}
+					log.Infof("%s '%s' sent %d bytes", name, key, len(trackStreams[trackIdx].Data))
+					trackIdx++
+				}
 			}
 		}
-		_, err := track.Write(trackData[id].Data)
-		if err != nil {
-			log.Errorf("send err: %s", err.Error())
-		}
-		lastTick = time.Now()
 	}
 }
 
@@ -428,6 +419,10 @@ func (p *PlaybackPeer) openRoom() {
 }
 
 func (p *PlaybackPeer) joinRoom() {
+	// if p.orphanRemoteId != "" {
+	// 	p.onRoomJoin(true, sdk.RoomInfo{}, nil)
+	// 	return
+	// }
 	log.Infof("--- Joining Room ---")
 	var err error
 	p.roomService.OnJoin = p.onRoomJoin
@@ -469,25 +464,17 @@ func (p *PlaybackPeer) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
 		return
 	}
 
-	for key := range p.onTracks {
-		track, err := webrtc.NewTrackLocalStaticRTP(
-			webrtc.RTPCodecCapability{MimeType: p.onTracks[key].trackRemote.Codec.MimeType},
-			uuid.NewString(),
-			p.peerId)
-		if err != nil {
-			log.Errorf("error creating TrackLocal: %s", err.Error())
-			continue
-		}
-		_, err = p.roomRTC.Publish(track)
+	for key := range p.trackLocals {
+		_, err = p.roomRTC.Publish(p.trackLocals[key])
 		if err != nil {
 			log.Errorf("error creating TrackLocal: %s", err.Error())
 		}
-		go p.sendTrack(track, key)
 	}
 	log.Infof("rtc.Join ok roomid=%v", p.roomId)
 }
 
 func (p *PlaybackPeer) onRTCTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	log.Warnf("%s onRTCTrack", PLAYBACK_PREFIX+p.peerName)
 }
 
 func (p *PlaybackPeer) onRTCError(err error) {
