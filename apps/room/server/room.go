@@ -589,7 +589,7 @@ func (r *Room) storeChat(chatPayload ChatPayload) {
 		log.Errorf("error connecting to database")
 		return
 	}
-	insertStmt := `INSERT INTO "` + r.roomRecordSchema + `"."chatAttachment"(
+	insertStmt := `INSERT INTO "` + r.roomRecordSchema + `"."chat"(
 					"id",
 					"roomId",
 					"timestamp",
