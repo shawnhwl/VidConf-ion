@@ -184,6 +184,14 @@ type Attachment struct {
 
 type ChatPayloads []ChatPayload
 
+type PostPlay struct {
+	Speed    *float32 `json:"speed,omitempty"`
+	Playfrom *int     `json:"playfrom,playfrom"`
+	Chat     *bool    `json:"chat,omitempty"`
+	Video    *bool    `json:"video,omitempty"`
+	Audio    *bool    `json:"audio,omitempty"`
+}
+
 func (p ChatPayloads) Len() int {
 	return len(p)
 }
@@ -960,58 +968,60 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 
 func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 	playbackId := c.Param("playbackid")
-	speed := c.Param("speed")
-	log.Infof("POST /playback/%s/speed/%s/play", playbackId, speed)
+	log.Infof("POST /playback/%s/play", playbackId)
 	if s.timeReady == "" {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
 		return
 	}
 
-	_, err := strconv.ParseFloat(speed, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
+	var postPlay PostPlay
+	if err := c.ShouldBindJSON(&postPlay); err != nil {
+		log.Warnf(err.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "JSON:" + err.Error()})
 		return
 	}
+	requestJSON, err := json.MarshalIndent(postPlay, "", "    ")
+	if err != nil {
+		log.Errorf(err.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	log.Infof("request:\n%s", string(requestJSON))
+
 	httpEndpoint, err := s.queryPlayback(playbackId, c)
 	if err != nil {
 		return
 	}
 
-	err = s.httpPost(httpEndpoint + "/" + speed)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
-		return
+	speed := "1.0"
+	if postPlay.Speed != nil {
+		speedf := *postPlay.Speed
+		if speedf < 0.0 {
+			speedf = 1.0
+		}
+		speed = fmt.Sprintf("%.1f", speedf)
 	}
-
-	c.Status(http.StatusOK)
-}
-
-func (s *RoomMgmtService) postPlaybackPlayfrom(c *gin.Context) {
-	playbackId := c.Param("playbackid")
-	speed := c.Param("speed")
-	secondsFromStart := c.Param("secondsfromstart")
-	log.Infof("POST /playback/%s/speed/:speed/play/%s", playbackId, speed, secondsFromStart)
-	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
-		return
+	playfrom := "-1"
+	if postPlay.Playfrom != nil {
+		playfromd := *postPlay.Playfrom
+		if playfromd < 0 {
+			playfromd = -1
+		}
+		playfrom = fmt.Sprintf("%d", playfromd)
 	}
-
-	_, err := strconv.ParseFloat(speed, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
-		return
+	chat := "true"
+	if postPlay.Chat != nil {
+		playfrom = fmt.Sprintf("%v", *postPlay.Chat)
 	}
-	_, err = strconv.Atoi(secondsFromStart)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-integer skip interval"})
-		return
+	video := "true"
+	if postPlay.Video != nil {
+		playfrom = fmt.Sprintf("%v", *postPlay.Video)
 	}
-	httpEndpoint, err := s.queryPlayback(playbackId, c)
-	if err != nil {
-		return
+	audio := "true"
+	if postPlay.Audio != nil {
+		playfrom = fmt.Sprintf("%v", *postPlay.Audio)
 	}
-
-	err = s.httpPost(httpEndpoint + "/" + speed + "/" + secondsFromStart)
+	err = s.httpPost(httpEndpoint + "/" + speed + "/" + playfrom + "/" + chat + "/" + video + "/" + audio)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -2098,8 +2108,7 @@ func (s *RoomMgmtService) start() {
 	router.GET("/rooms/:roomid/chats/:fromindex/:toindex", s.getRoomsByRoomidChatRange)
 	// playback
 	router.POST("/playback/rooms/:roomid", s.postPlayback)
-	router.POST("/playback/:playbackid/speed/:speed/play", s.postPlaybackPlay)
-	router.POST("/playback/:playbackid/speed/:speed/play/:secondsfromstart", s.postPlaybackPlayfrom)
+	router.POST("/playback/:playbackid/play", s.postPlaybackPlay)
 	router.POST("/playback/:playbackid/pause", s.postPlaybackPause)
 	router.DELETE("/playback/:playbackid", s.deletePlayback)
 
