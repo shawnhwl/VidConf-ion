@@ -200,33 +200,14 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
-	// create table "chatMessage"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.RoomRecordSchema + `"."chatMessage"(
+	// create table "chat"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.RoomRecordSchema + `"."chat"(
 					"id"        UUID PRIMARY KEY,
 					"roomId"    UUID NOT NULL,
 					"timestamp" TIMESTAMPTZ NOT NULL,
 					"userId"    TEXT NOT NULL,
 					"userName"  TEXT NOT NULL,
 					"text"      TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "chatAttachment"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.RoomRecordSchema + `"."chatAttachment"(
-					"id"        UUID PRIMARY KEY,
-					"roomId"    UUID NOT NULL,
-					"timestamp" TIMESTAMPTZ NOT NULL,
-					"userId"    TEXT NOT NULL,
-					"userName"  TEXT NOT NULL,
 					"fileName"  TEXT NOT NULL,
 					"fileSize"  INT NOT NULL,
 					"filePath"  TEXT NOT NULL,

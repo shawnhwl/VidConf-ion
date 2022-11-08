@@ -1125,9 +1125,12 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 	var chatrows *sql.Rows
 	queryStmt := `SELECT "userId",
 						 "userName",
-						 "text",
 						 "timestamp"
-					FROM "` + s.roomRecordSchema + `"."chatMessage" WHERE "roomId"=$1`
+						 "text",
+						 "fileName",
+						 "fileSize",
+						 "filePath",
+					 FROM "` + s.roomRecordSchema + `"."chat" WHERE "roomId"=$1`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		chatrows, err = s.postgresDB.Query(queryStmt, roomId)
 		if err == nil {
@@ -1145,65 +1148,31 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 	for chatrows.Next() {
 		var chat ChatPayload
 		var text string
+		var fileinfo Attachment
+		var filePath string
 		err := chatrows.Scan(&chat.Uid,
 			&chat.Name,
+			&chat.Timestamp,
 			&text,
-			&chat.Timestamp)
+			&fileinfo.Name,
+			&fileinfo.Size,
+			&filePath)
 		if err != nil {
 			errorString := fmt.Sprintf("could not query database: %s", err)
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 			return RoomRecord{}, ChatPayloads{}, err
 		}
-		chat.Text = &text
+		if text != "" {
+			chat.Text = &text
+		}
+		if filePath != "" {
+			fileinfo.FilePath = &filePath
+			chat.Base64File = &fileinfo
+		}
 		chats = append(chats, chat)
 	}
 
-	attachments := make(ChatPayloads, 0)
-	var attachmentrows *sql.Rows
-	queryStmt = `SELECT "userId",
-						"userName",
-						"fileName",
-						"fileSize",
-						"filePath",
-						"timestamp"
-					FROM "` + s.roomRecordSchema + `"."chatAttachment" WHERE "roomId"=$1`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		attachmentrows, err = s.postgresDB.Query(queryStmt, roomId)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		errorString := fmt.Sprintf("could not query database: %s", err)
-		log.Errorf(errorString)
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return RoomRecord{}, ChatPayloads{}, err
-	}
-	defer attachmentrows.Close()
-	for attachmentrows.Next() {
-		var attachment ChatPayload
-		var fileinfo Attachment
-		var filePath string
-		err := chatrows.Scan(&attachment.Uid,
-			&attachment.Name,
-			&fileinfo.Name,
-			&fileinfo.Size,
-			&filePath,
-			&attachment.Timestamp)
-		if err != nil {
-			errorString := fmt.Sprintf("could not query database: %s", err)
-			log.Errorf(errorString)
-			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-			return RoomRecord{}, ChatPayloads{}, err
-		}
-		fileinfo.FilePath = &filePath
-		attachment.Base64File = &fileinfo
-		attachments = append(attachments, attachment)
-	}
-
-	chats = append(chats, attachments...)
 	sort.Sort(chats)
 	return roomRecord, chats, nil
 }

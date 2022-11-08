@@ -521,9 +521,6 @@ type Attachment struct {
 }
 
 func (r *Room) insertChat(data []byte) {
-	if r.postgresDB == nil || r.minioClient == nil {
-		return
-	}
 	var err error
 	var chatPayload ChatPayload
 	err = json.Unmarshal(data, &chatPayload)
@@ -544,81 +541,69 @@ func (r *Room) insertChat(data []byte) {
 		log.Errorf("chat message has no sender name")
 		return
 	}
+	if chatPayload.Msg.Text == nil && chatPayload.Msg.Base64File == nil {
+		jsonStr, _ := json.MarshalIndent(chatPayload, "", "    ")
+		log.Warnf("chat message is on neither text nor file type:\n%s", jsonStr)
+		return
+	}
 	if chatPayload.Msg.Timestamp == nil {
 		timeStamp := time.Now()
 		chatPayload.Msg.Timestamp = &timeStamp
 	}
-
-	if chatPayload.Msg.Text != nil {
-		r.insertChatText(chatPayload)
-	} else if chatPayload.Msg.Base64File != nil {
-		r.insertChatFile(chatPayload)
-	} else {
-		jsonStr, _ := json.MarshalIndent(chatPayload, "", "    ")
-		log.Warnf("chat message is on neither text nor file type:\n%s", jsonStr)
+	if chatPayload.Msg.Text == nil {
+		text := ""
+		chatPayload.Msg.Text = &text
 	}
+
+	r.storeChat(chatPayload)
 	data = nil
 }
 
-func (r *Room) insertChatText(chatPayload ChatPayload) {
+func (r *Room) storeChat(chatPayload ChatPayload) {
 	var err error
-	insertStmt := `INSERT INTO "` + r.roomRecordSchema + `"."chatMessage"(
-					"id",
-					"roomId",
-					"timestamp",
-					"userId",
-					"userName",
-					"text")
-					VALUES($1, $2, $3, $4, $5, $6)`
-	dbId := uuid.NewString()
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = r.postgresDB.Exec(insertStmt,
-			dbId,
-			r.sid,
-			*chatPayload.Msg.Timestamp,
-			*chatPayload.Msg.Uid,
-			*chatPayload.Msg.Name,
-			*chatPayload.Msg.Text)
-		if err == nil {
-			break
-		}
-		if strings.Contains(err.Error(), DUP_PK) {
-			dbId = uuid.NewString()
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("could not insert into database: %s", err)
-	}
-}
 
-func (r *Room) insertChatFile(chatPayload ChatPayload) {
-	var err error
-	if chatPayload.Msg.Base64File.Data == nil {
-		log.Errorf("chat attachment has no data")
+	fileName := ""
+	fileSize := 0
+	filePath := ""
+	if chatPayload.Msg.Base64File != nil {
+		if chatPayload.Msg.Base64File.Data == nil {
+			log.Errorf("chat attachment has no data")
+			return
+		}
+		if chatPayload.Msg.Base64File.Name == nil {
+			log.Errorf("chat attachment has no name")
+			return
+		}
+		if chatPayload.Msg.Base64File.Size == nil {
+			log.Errorf("chat attachment has no size")
+			return
+		}
+		if r.minioClient == nil {
+			log.Errorf("error connecting to attachment storage")
+			return
+		}
+		fileName = *chatPayload.Msg.Base64File.Name
+		fileSize = *chatPayload.Msg.Base64File.Size
+	}
+	if r.postgresDB == nil {
+		log.Errorf("error connecting to database")
 		return
 	}
-	if chatPayload.Msg.Base64File.Name == nil {
-		log.Errorf("chat attachment has no name")
-		return
-	}
-	if chatPayload.Msg.Base64File.Size == nil {
-		log.Errorf("chat attachment has no size")
-		return
-	}
-
 	insertStmt := `INSERT INTO "` + r.roomRecordSchema + `"."chatAttachment"(
 					"id",
 					"roomId",
 					"timestamp",
 					"userId",
 					"userName",
+					"text,
 					"fileName",
 					"fileSize",
 					"filePath")
-					VALUES($1, $2, $3, $4, $5, $6, $7, $8)`
+					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	objName := uuid.NewString()
-	filePath := ATTACHMENT_FOLDERNAME + objName
+	if chatPayload.Msg.Base64File != nil {
+		filePath = ATTACHMENT_FOLDERNAME + objName
+	}
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = r.postgresDB.Exec(insertStmt,
 			objName,
@@ -626,15 +611,18 @@ func (r *Room) insertChatFile(chatPayload ChatPayload) {
 			*chatPayload.Msg.Timestamp,
 			*chatPayload.Msg.Uid,
 			*chatPayload.Msg.Name,
-			*chatPayload.Msg.Base64File.Name,
-			*chatPayload.Msg.Base64File.Size,
+			*chatPayload.Msg.Text,
+			fileName,
+			fileSize,
 			filePath)
 		if err == nil {
 			break
 		}
 		if strings.Contains(err.Error(), DUP_PK) {
 			objName = uuid.NewString()
-			filePath = ATTACHMENT_FOLDERNAME + objName
+			if chatPayload.Msg.Base64File != nil {
+				filePath = ATTACHMENT_FOLDERNAME + objName
+			}
 		}
 		time.Sleep(RETRY_DELAY)
 	}
@@ -643,22 +631,25 @@ func (r *Room) insertChatFile(chatPayload ChatPayload) {
 		return
 	}
 
-	data := bytes.NewReader([]byte(*chatPayload.Msg.Base64File.Data))
-	var uploadInfo minio.UploadInfo
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		uploadInfo, err = r.minioClient.PutObject(context.Background(),
-			r.bucketName,
-			r.sid+filePath,
-			data,
-			int64(len(*chatPayload.Msg.Base64File.Data)),
-			minio.PutObjectOptions{ContentType: "application/octet-stream"})
-		if err == nil {
-			break
+	if chatPayload.Msg.Base64File != nil {
+		data := bytes.NewReader([]byte(*chatPayload.Msg.Base64File.Data))
+		var uploadInfo minio.UploadInfo
+		for retry := 0; retry < RETRY_COUNT; retry++ {
+			uploadInfo, err = r.minioClient.PutObject(context.Background(),
+				r.bucketName,
+				r.sid+filePath,
+				data,
+				int64(len(*chatPayload.Msg.Base64File.Data)),
+				minio.PutObjectOptions{ContentType: "application/octet-stream"})
+			if err == nil {
+				break
+			}
+			time.Sleep(RETRY_DELAY)
 		}
-		time.Sleep(RETRY_DELAY)
+		if err != nil {
+			log.Errorf("could not upload attachment: %s", err)
+		}
+		log.Infof("successfully uploaded bytes: ", uploadInfo)
 	}
-	if err != nil {
-		log.Errorf("could not upload attachment: %s", err)
-	}
-	log.Infof("successfully uploaded bytes: ", uploadInfo)
+	log.Infof("insert chat completed")
 }

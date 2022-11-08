@@ -390,9 +390,12 @@ func (s *RoomPlaybackService) getChats(roomId string) ChatPayloads {
 	var chatrows *sql.Rows
 	queryStmt := `SELECT "userId",
 						 "userName",
-						 "text",
 						 "timestamp"
-					FROM "` + s.roomRecordSchema + `"."chatMessage" WHERE "roomId"=$1`
+						 "text",
+						 "fileName",
+						 "fileSize",
+						 "filePath",
+					 FROM "` + s.roomRecordSchema + `"."chat" WHERE "roomId"=$1`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		chatrows, err = s.postgresDB.Query(queryStmt, roomId)
 		if err == nil {
@@ -410,79 +413,45 @@ func (s *RoomPlaybackService) getChats(roomId string) ChatPayloads {
 		var userId string
 		var name string
 		var text string
+		var fileinfo Attachment
+		var filePath string
 		err := chatrows.Scan(&userId,
 			&name,
+			&chat.Timestamp,
 			&text,
-			&chat.Timestamp)
+			&fileinfo.Name,
+			&fileinfo.Size,
+			&filePath)
 		if err != nil {
 			log.Errorf("could not query database: %s", err)
 			os.Exit(1)
 		}
-		chat.Text = &text
+		if text != "" {
+			chat.Text = &text
+		}
+		if filePath != "" {
+			object, err := s.minioClient.GetObject(context.Background(),
+				s.bucketName,
+				roomId+filePath,
+				minio.GetObjectOptions{})
+			if err != nil {
+				log.Errorf("could not download attachment: %s", err)
+				continue
+			}
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(object)
+			if err != nil {
+				log.Errorf("could not process download: %s", err)
+				continue
+			}
+			fileinfo.Data = buf.String()
+			chat.Base64File = &fileinfo
+		}
 		chat.Uid = PLAYBACK_PREFIX + userId
 		chat.Name = PLAYBACK_PREFIX + name
 		chats = append(chats, chat)
 	}
 
-	attachments := make(ChatPayloads, 0)
-	var attachmentrows *sql.Rows
-	queryStmt = `SELECT "userId",
-						"userName",
-						"fileName",
-						"fileSize",
-						"filePath",
-						"timestamp"
-					FROM "` + s.roomRecordSchema + `"."chatAttachment" WHERE "roomId"=$1`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		attachmentrows, err = s.postgresDB.Query(queryStmt, roomId)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("could not query database: %s", err)
-		os.Exit(1)
-	}
-	defer attachmentrows.Close()
-	for attachmentrows.Next() {
-		var attachment ChatPayload
-		var userId string
-		var name string
-		var fileinfo Attachment
-		var filePath string
-		err := chatrows.Scan(&userId,
-			&name,
-			&fileinfo.Name,
-			&fileinfo.Size,
-			&filePath,
-			&attachment.Timestamp)
-		if err != nil {
-			log.Errorf("could not query database: %s", err)
-			os.Exit(1)
-		}
-		object, err := s.minioClient.GetObject(context.Background(),
-			s.bucketName,
-			roomId+filePath,
-			minio.GetObjectOptions{})
-		if err != nil {
-			log.Errorf("could not download attachment: %s", err)
-			continue
-		}
-		buf := new(bytes.Buffer)
-		_, err = buf.ReadFrom(object)
-		if err != nil {
-			log.Errorf("could not process download: %s", err)
-			continue
-		}
-		fileinfo.Data = buf.String()
-		attachment.Base64File = &fileinfo
-		attachment.Uid = PLAYBACK_PREFIX + userId
-		attachment.Name = PLAYBACK_PREFIX + name
-		attachments = append(attachments, attachment)
-	}
-
-	chats = append(chats, attachments...)
 	sort.Sort(chats)
 	return chats
 }
