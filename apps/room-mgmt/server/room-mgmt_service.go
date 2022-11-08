@@ -1007,19 +1007,19 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 		if playfromd < 0 {
 			playfromd = -1
 		}
-		playfrom = fmt.Sprintf("%d", playfromd)
+		playfrom = strconv.Itoa(playfromd)
 	}
 	chat := "true"
 	if postPlay.Chat != nil {
-		playfrom = fmt.Sprintf("%v", *postPlay.Chat)
+		chat = strconv.FormatBool(*postPlay.Chat)
 	}
 	video := "true"
 	if postPlay.Video != nil {
-		playfrom = fmt.Sprintf("%v", *postPlay.Video)
+		video = strconv.FormatBool(*postPlay.Video)
 	}
 	audio := "true"
 	if postPlay.Audio != nil {
-		playfrom = fmt.Sprintf("%v", *postPlay.Audio)
+		audio = strconv.FormatBool(*postPlay.Audio)
 	}
 	err = s.httpPost(httpEndpoint + "/" + speed + "/" + playfrom + "/" + chat + "/" + video + "/" + audio)
 	if err != nil {

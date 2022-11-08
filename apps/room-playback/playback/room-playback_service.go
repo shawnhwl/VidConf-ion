@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -55,49 +56,54 @@ func (s *RoomPlaybackService) getReadiness(c *gin.Context) {
 
 func (s *RoomPlaybackService) postPlay(c *gin.Context) {
 	speed := c.Param("speed")
-	log.Infof("POST /%s", speed)
+	playfrom := c.Param("playfrom")
+	chat := c.Param("chat")
+	video := c.Param("video")
+	audio := c.Param("audio")
+	log.Infof("POST /%s/%s/%s/%s/%s", speed, playfrom, chat, video, audio)
 	if s.timeReady == "" {
 		c.String(http.StatusInternalServerError, NOT_READY)
 		return
 	}
 
-	speedf, err := strconv.ParseFloat(speed, 32)
+	speedf, err := strconv.ParseFloat(speed, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
+		errorsttring := fmt.Sprintf("non-float speedParam '%s'", speed)
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
 		return
 	}
-	s.ctrlCh <- Ctrl{
-		isPaused:     false,
-		skipInterval: -1,
-		speed10:      time.Duration(speedf * 10),
-	}
-	c.Status(http.StatusOK)
-}
-
-func (s *RoomPlaybackService) postPlayFrom(c *gin.Context) {
-	speed := c.Param("speed")
-	secondsFromStart := c.Param("secondsfromstart")
-	log.Infof("POST /%s/%s", speed, secondsFromStart)
-	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
+	playfromd, err := strconv.Atoi(playfrom)
+	if err != nil {
+		errorsttring := fmt.Sprintf("non-integer playfromParam '%s'", playfrom)
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
 		return
 	}
-
-	speedf, err := strconv.ParseFloat(speed, 32)
+	chatb, err := strconv.ParseBool(chat)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
+		errorsttring := fmt.Sprintf("non-boolean chatParam '%s'", chat)
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
 		return
 	}
-	skipInterval, err := strconv.Atoi(secondsFromStart)
+	videob, err := strconv.ParseBool(video)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-integer skip interval"})
+		errorsttring := fmt.Sprintf("non-boolean videoParam '%s'", video)
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
+		return
+	}
+	audiob, err := strconv.ParseBool(audio)
+	if err != nil {
+		errorsttring := fmt.Sprintf("non-boolean audioParam '%s'", audio)
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
 		return
 	}
 
 	s.ctrlCh <- Ctrl{
-		isPaused:     false,
-		skipInterval: skipInterval,
-		speed10:      time.Duration(speedf * 10),
+		isPaused: false,
+		speed10:  time.Duration(speedf * 10),
+		playFrom: playfromd,
+		chat:     chatb,
+		video:    videob,
+		audio:    audiob,
 	}
 	c.Status(http.StatusOK)
 }
@@ -117,8 +123,11 @@ func (s *RoomPlaybackService) postPause(c *gin.Context) {
 
 type Ctrl struct {
 	isPaused        bool
-	skipInterval    int
 	speed10         time.Duration
+	playFrom        int
+	chat            bool
+	video           bool
+	audio           bool
 	actualRefTime   time.Time
 	playbackRefTime time.Time
 }
@@ -157,6 +166,7 @@ type RoomPlaybackService struct {
 	chatId          int
 
 	waitPeer  *sync.WaitGroup
+	isPlaying bool
 	isRunning bool
 	peers     []*PlaybackPeer
 
@@ -200,6 +210,7 @@ func NewRoomPlaybackService(config Config, quitCh chan os.Signal) *RoomPlaybackS
 		chatId:       0,
 
 		waitPeer:  new(sync.WaitGroup),
+		isPlaying: false,
 		isRunning: false,
 		peers:     make([]*PlaybackPeer, 0),
 	}
@@ -245,8 +256,7 @@ func (s *RoomPlaybackService) start() {
 	router.Use(gin.Recovery())
 	router.GET("/liveness", s.getLiveness)
 	router.GET("/readiness", s.getReadiness)
-	router.POST("/:speed", s.postPlay)
-	router.POST("/:speed/:secondsfromstart", s.postPlayFrom)
+	router.POST("/:speed/:playfrom/:chat/:video/:audio", s.postPlay)
 	router.POST("/pause", s.postPause)
 
 	log.Infof("HTTP service starting at %s", s.conf.Playback.Addr)
