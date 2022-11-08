@@ -9,47 +9,109 @@ import (
 	sdk "github.com/pion/ion-sdk-go"
 )
 
-func (s *RoomPlaybackService) playbackSentry() {
-	exitCh := make(chan struct{})
-	for id := range s.peers {
-		go s.peers[id].Start(exitCh)
+func (s *RoomPlaybackService) pausePlayback(ctrl Ctrl) {
+	if s.isRunning {
+		s.playbackRefTime = s.playbackRefTime.Add(time.Since(s.actualRefTime) * s.speed10 / 10)
+		for id := range s.peers {
+			s.peers[id].ctrlCh <- ctrl
+		}
+		s.isRunning = false
 	}
+}
+
+func (s *RoomPlaybackService) playbackCtrl(ctrl Ctrl) {
+	if ctrl.isPaused {
+		s.pausePlayback(ctrl)
+		return
+	}
+	if s.isRunning {
+		if s.speed10 == ctrl.speed10 {
+			if ctrl.skipInterval == -1 {
+				return
+			}
+		}
+		s.pausePlayback(ctrl)
+	}
+	if ctrl.skipInterval >= 0 {
+		s.playbackRefTime = s.roomStartTime.Add(time.Duration(ctrl.skipInterval) * time.Second)
+		chatId := 0
+		for ; chatId < s.lenChatPayloads; chatId++ {
+			if s.chatPayloads[chatId].Timestamp.After(s.playbackRefTime) {
+				break
+			}
+			s.sendChat(s.chatPayloads[chatId])
+		}
+		s.chatId = chatId
+	}
+	s.speed10 = ctrl.speed10
+	s.actualRefTime = time.Now().Add(time.Second)
+	for id := range s.peers {
+		s.peers[id].ctrlCh <- Ctrl{
+			isPaused:        false,
+			skipInterval:    0,
+			speed10:         s.speed10,
+			playbackRefTime: s.playbackRefTime,
+			actualRefTime:   s.actualRefTime,
+		}
+	}
+	s.isRunning = true
+}
+
+func (s *RoomPlaybackService) sendChat(chatPayload ChatPayload) {
+	var err error
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		err := s.roomService.SendMessage(s.playbackId,
+			s.systemUserId,
+			"all",
+			map[string]interface{}{"msg": chatPayload})
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if err != nil {
+		log.Errorf("Error playback chat to playbackId '%s' : %v", s.playbackId, err)
+	}
+}
+
+func (s *RoomPlaybackService) playbackChat() {
+	if !s.isRunning {
+		return
+	}
+	if s.chatId >= s.lenChatPayloads {
+		return
+	}
+
+	if s.speed10*time.Since(s.actualRefTime) >
+		PLAYBACK_SPEED10*s.chatPayloads[s.chatId].Timestamp.Sub(s.playbackRefTime) {
+		s.sendChat(s.chatPayloads[s.chatId])
+		s.chatId++
+	}
+}
+
+func (s *RoomPlaybackService) playbackSentry() {
+	s.chatId = 0
+	s.speed10 = time.Duration(10)
+	s.playbackRefTime = s.roomStartTime
+	s.actualRefTime = time.Now().Add(time.Second)
+	for id := range s.peers {
+		s.peers[id].ctrlCh <- Ctrl{
+			isPaused:        false,
+			skipInterval:    0,
+			speed10:         s.speed10,
+			playbackRefTime: s.playbackRefTime,
+			actualRefTime:   s.actualRefTime,
+		}
+	}
+	s.isRunning = true
+
 	for {
 		select {
 		case ctrl := <-s.ctrlCh:
-			if ctrl == "paused" {
-				if s.isRunning {
-					s.isRunning = false
-					close(exitCh)
-					s.pauseTime = time.Now()
-				}
-			} else if ctrl == "play" {
-				if !s.isRunning {
-
-					exitCh = make(chan struct{})
-					for _, peer := range s.peers {
-						peer.Start(exitCh)
-					}
-				}
-			} else {
-				if s.isRunning {
-					s.isRunning = false
-					close(exitCh)
-					s.pauseTime = time.Now()
-				}
-
-				// secondsFromStart, _ := strconv.Atoi(ctrl)
-
-				exitCh = make(chan struct{})
-				for _, peer := range s.peers {
-					peer.Start(exitCh)
-				}
-			}
+			s.playbackCtrl(ctrl)
 		default:
-			time.Sleep(time.Microsecond)
-			if s.isRunning {
-			}
-			// send chat
+			time.Sleep(time.Nanosecond)
+			s.playbackChat()
 		}
 	}
 }

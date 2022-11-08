@@ -4,23 +4,22 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/gob"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 	minio "github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
+	minioService "github.com/pion/ion/apps/minio"
+	postgresService "github.com/pion/ion/apps/postgres"
 )
 
 const (
@@ -36,6 +35,8 @@ const (
 
 	PLAYBACK_PREFIX     string = "[RECORDED]"
 	LEN_PLAYBACK_PREFIX int    = len(PLAYBACK_PREFIX)
+
+	PLAYBACK_SPEED10 time.Duration = 10
 )
 
 func (s *RoomPlaybackService) getLiveness(c *gin.Context) {
@@ -53,30 +54,51 @@ func (s *RoomPlaybackService) getReadiness(c *gin.Context) {
 }
 
 func (s *RoomPlaybackService) postPlay(c *gin.Context) {
-	log.Infof("POST /play")
+	speed := c.Param("speed")
+	log.Infof("POST /%s", speed)
 	if s.timeReady == "" {
 		c.String(http.StatusInternalServerError, NOT_READY)
 		return
 	}
 
-	s.ctrlCh <- "play"
+	speedf, err := strconv.ParseFloat(speed, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
+		return
+	}
+	s.ctrlCh <- Ctrl{
+		isPaused:     false,
+		skipInterval: -1,
+		speed10:      time.Duration(speedf * 10),
+	}
 	c.Status(http.StatusOK)
 }
 
 func (s *RoomPlaybackService) postPlayFrom(c *gin.Context) {
+	speed := c.Param("speed")
 	secondsFromStart := c.Param("secondsfromstart")
-	log.Infof("POST /playFrom/%s", secondsFromStart)
+	log.Infof("POST /%s/%s", speed, secondsFromStart)
 	if s.timeReady == "" {
 		c.String(http.StatusInternalServerError, NOT_READY)
 		return
 	}
-	_, err := strconv.Atoi(secondsFromStart)
+
+	speedf, err := strconv.ParseFloat(speed, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-float speed"})
+		return
+	}
+	skipInterval, err := strconv.Atoi(secondsFromStart)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "non-integer skip interval"})
 		return
 	}
 
-	s.ctrlCh <- secondsFromStart
+	s.ctrlCh <- Ctrl{
+		isPaused:     false,
+		skipInterval: skipInterval,
+		speed10:      time.Duration(speedf * 10),
+	}
 	c.Status(http.StatusOK)
 }
 
@@ -87,8 +109,18 @@ func (s *RoomPlaybackService) postPause(c *gin.Context) {
 		return
 	}
 
-	s.ctrlCh <- "pause"
+	s.ctrlCh <- Ctrl{
+		isPaused: true,
+	}
 	c.Status(http.StatusOK)
+}
+
+type Ctrl struct {
+	isPaused        bool
+	skipInterval    int
+	speed10         time.Duration
+	actualRefTime   time.Time
+	playbackRefTime time.Time
 }
 
 // RoomPlaybackService represents a room-playback instance
@@ -98,7 +130,7 @@ type RoomPlaybackService struct {
 
 	joinRoomCh     chan struct{}
 	isSdkConnected bool
-	ctrlCh         chan string
+	ctrlCh         chan Ctrl
 
 	timeLive  string
 	timeReady string
@@ -120,27 +152,31 @@ type RoomPlaybackService struct {
 	roomId          string
 	roomStartTime   time.Time
 
-	pauseTime    time.Time
-	playTime     time.Time
-	chatPayloads ChatPayloads
-	chatId       int
+	chatPayloads    ChatPayloads
+	lenChatPayloads int
+	chatId          int
 
 	waitPeer  *sync.WaitGroup
 	isRunning bool
 	peers     []*PlaybackPeer
+
+	speed10         time.Duration
+	playbackRefTime time.Time
+	actualRefTime   time.Time
 }
 
 func NewRoomPlaybackService(config Config, quitCh chan os.Signal) *RoomPlaybackService {
 	timeLive := time.Now().Format(time.RFC3339)
-	minioClient := getMinioClient(config)
-	postgresDB := getPostgresDB(config)
+	minioClient := minioService.GetMinioClient(config.Minio)
+	postgresDB := postgresService.GetPostgresDB(config.Postgres)
+
 	s := &RoomPlaybackService{
 		conf:   config,
 		quitCh: quitCh,
 
 		joinRoomCh:     make(chan struct{}, 32),
 		isSdkConnected: true,
-		ctrlCh:         make(chan string, 32),
+		ctrlCh:         make(chan Ctrl, 32),
 
 		timeLive:  timeLive,
 		timeReady: "",
@@ -171,434 +207,18 @@ func NewRoomPlaybackService(config Config, quitCh chan os.Signal) *RoomPlaybackS
 	s.preparePlayback()
 	go s.checkForRoomError()
 	s.joinRoomCh <- struct{}{}
+	for {
+		time.Sleep(time.Second)
+		if s.timeReady != "" {
+			break
+		}
+	}
 	go s.playbackSentry()
-	go s.checkForEmptyRoom()
+	if config.Playback.CheckForEmptyRoom {
+		go s.checkForEmptyRoom()
+	}
 
 	return s
-}
-
-type TestTrack struct {
-	Timestamp time.Time
-	Data      []byte
-}
-
-func testMinioClient(minioClient *minio.Client, config Config) {
-	testString := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	ptestString := &testString
-	testStringData := bytes.NewReader([]byte(*ptestString))
-	var err error
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = minioClient.PutObject(context.Background(),
-			config.Minio.BucketName,
-			"/test/testString",
-			testStringData,
-			int64(len(*ptestString)),
-			minio.PutObjectOptions{ContentType: "application/octet-stream"})
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("could not upload attachment: %s", err)
-		os.Exit(1)
-	}
-
-	var object *minio.Object
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		object, err = minioClient.GetObject(context.Background(),
-			config.Minio.BucketName,
-			"/test/testString",
-			minio.GetObjectOptions{})
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("could not download attachment: %s", err)
-		os.Exit(1)
-	}
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(object)
-	if err != nil {
-		log.Errorf("could not process downloaded attachment: %s", err)
-		os.Exit(1)
-	}
-	if testString != buf.String() {
-		log.Errorf("downloaded base64 string is different: %s", buf.String())
-		os.Exit(1)
-	}
-
-	testTracks := make([]TestTrack, 0)
-	for id := 0; id < 100; id++ {
-		timeNow := time.Now()
-		testTracks = append(testTracks, TestTrack{timeNow, []byte(timeNow.String())})
-	}
-	for id := 0; id < 100; id += 5 {
-		var testTrackData bytes.Buffer
-		err := gob.NewEncoder(&testTrackData).Encode(testTracks[id : id+5])
-		if err != nil {
-			log.Errorf("track encoding error:", err)
-			os.Exit(1)
-		}
-
-		var track []TestTrack
-		buf := bytes.NewBuffer(testTrackData.Bytes())
-		err = gob.NewDecoder(buf).Decode(&track)
-		if err != nil {
-			log.Errorf("track decoding error:", err)
-			os.Exit(1)
-		}
-
-		if string(testTracks[id].Data) != string(track[0].Data) {
-			log.Errorf("codec tracks.Data is different: %s vs %s", string(testTracks[id].Data), string(track[0].Data))
-			os.Exit(1)
-		}
-
-		for retry := 0; retry < RETRY_COUNT; retry++ {
-			_, err = minioClient.PutObject(context.Background(),
-				config.Minio.BucketName,
-				"/test/testTrack"+strconv.Itoa(id),
-				&testTrackData,
-				int64(testTrackData.Len()),
-				minio.PutObjectOptions{ContentType: "application/octet-stream"})
-			if err == nil {
-				break
-			}
-			time.Sleep(RETRY_DELAY)
-		}
-		if err != nil {
-			log.Errorf("could not upload file: %s", err)
-			os.Exit(1)
-		}
-	}
-
-	recvTracks := make([]TestTrack, 0)
-	for id := 0; id < 100; id += 5 {
-		for retry := 0; retry < RETRY_COUNT; retry++ {
-			object, err = minioClient.GetObject(context.Background(),
-				config.Minio.BucketName,
-				"/test/testTrack"+strconv.Itoa(id),
-				minio.GetObjectOptions{})
-			if err == nil {
-				break
-			}
-			time.Sleep(RETRY_DELAY)
-		}
-		if err != nil {
-			log.Errorf("could not download attachment: %s", err)
-			os.Exit(1)
-		}
-
-		buf := new(bytes.Buffer)
-		_, err = buf.ReadFrom(object)
-		if err != nil {
-			log.Errorf("could not process download: %s", err)
-			continue
-		}
-		var tracks []TestTrack
-		gob.NewDecoder(buf).Decode(&tracks)
-		recvTracks = append(recvTracks, tracks...)
-	}
-
-	for id := 0; id < 100; id++ {
-		if string(testTracks[id].Data) != string(recvTracks[id].Data) {
-			log.Errorf("downloaded tracks.data is different: %s vs %s", string(testTracks[id].Data), string(recvTracks[id].Data))
-			os.Exit(1)
-		}
-	}
-
-	log.Infof("testMinioClient OK")
-}
-
-func getMinioClient(config Config) *minio.Client {
-	log.Infof("--- Connecting to MinIO ---")
-	minioClient, err := minio.New(config.Minio.Endpoint, &minio.Options{
-		Creds: credentials.NewStaticV4(config.Minio.AccessKeyID,
-			config.Minio.SecretAccessKey, ""),
-		Secure: config.Minio.UseSSL,
-	})
-	if err != nil {
-		log.Errorf("Unable to connect to filestore: %v\n", err)
-		os.Exit(1)
-	}
-	err = minioClient.MakeBucket(context.Background(),
-		config.Minio.BucketName,
-		minio.MakeBucketOptions{})
-	if err != nil {
-		exists, errBucketExists := minioClient.BucketExists(context.Background(),
-			config.Minio.BucketName)
-		if errBucketExists != nil || !exists {
-			log.Errorf("Unable to create bucket: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	testMinioClient(minioClient, config)
-	return minioClient
-}
-
-func getPostgresDB(config Config) *sql.DB {
-	log.Infof("--- Connecting to PostgreSql ---")
-	addrSplit := strings.Split(config.Postgres.Addr, ":")
-	port, err := strconv.Atoi(addrSplit[1])
-	if err != nil {
-		log.Errorf("invalid port number: %s\n", addrSplit[1])
-		os.Exit(1)
-	}
-	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		addrSplit[0],
-		port,
-		config.Postgres.User,
-		config.Postgres.Password,
-		config.Postgres.Database)
-	var postgresDB *sql.DB
-	// postgresDB.Open
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		postgresDB, err = sql.Open("postgres", psqlconn)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to connect to database: %v\n", err)
-		os.Exit(1)
-	}
-	// postgresDB.Ping
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		err = postgresDB.Ping()
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to ping database: %v\n", err)
-		os.Exit(1)
-	}
-	// create RoomMgmtSchema schema
-	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "room"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."room"(
-					"id"             UUID PRIMARY KEY,
-					"name"           TEXT NOT NULL,
-					"status"         TEXT NOT NULL,
-					"startTime"      TIMESTAMPTZ NOT NULL,
-					"endTime"        TIMESTAMPTZ NOT NULL,
-					"allowedUserId"  TEXT ARRAY NOT NULL,
-					"earlyEndReason" TEXT NOT NULL,
-					"createdBy"      TEXT NOT NULL,
-					"createdAt"      TIMESTAMPTZ NOT NULL,
-					"updatedBy"      TEXT NOT NULL,
-					"updatedAt"      TIMESTAMPTZ NOT NULL)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-
-	// create RoomRecordSchema schema
-	createStmt = `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "room"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."room"(
-		"id"        UUID PRIMARY KEY,
-		"name"      TEXT NOT NULL,
-		"startTime" TIMESTAMPTZ NOT NULL,
-		"endTime"   TIMESTAMPTZ NOT NULL,
-		CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "peerEvent"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."peerEvent"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"state"        INT NOT NULL,
-					"peerId"       TEXT NOT NULL,
-					"peerName"     TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "trackEvent"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackEvent"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"state"        INT NOT NULL,
-					"peerId"       TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "trackInfo"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackInfo"(
-					"id"           UUID PRIMARY KEY,
-					"trackEventId" UUID NOT NULL,
-					"roomId"       UUID NOT NULL,
-					"trackId"      TEXT NOT NULL,
-					"kind"         TEXT NOT NULL,
-					"muted"        BOOL NOT NULL,
-					"type"         INT NOT NULL,
-					"streamId"     TEXT NOT NULL,
-					"label"        TEXT NOT NULL,
-					"subscribe"    BOOL NOT NULL,
-					"layer"        TEXT NOT NULL,
-					"direction"    TEXT NOT NULL,
-					"width"        INT NOT NULL,
-					"height"       INT NOT NULL,
-					"frameRate"    INT NOT NULL,
-					CONSTRAINT fk_trackEvent FOREIGN KEY("trackEventId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."trackEvent"("id") ON DELETE CASCADE,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "onTrack"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."onTrack"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"trackId"      TEXT NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"trackRemote"  JSON NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "trackStream"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."trackStream"(
-					"id"          UUID PRIMARY KEY,
-					"onTrackId"   UUID NOT NULL,
-					"roomId"      UUID NOT NULL,
-					"timestamp"   TIMESTAMPTZ NOT NULL,
-					"filePath"    TEXT NOT NULL,
-					CONSTRAINT fk_onTrack FOREIGN KEY("onTrackId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."onTrack"("id") ON DELETE CASCADE,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "chatMessage"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatMessage"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"userId"       TEXT NOT NULL,
-					"userName"     TEXT NOT NULL,
-					"text"         TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "chatAttachment"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."chatAttachment"(
-					"id"           UUID PRIMARY KEY,
-					"roomId"       UUID NOT NULL,
-					"timestamp"    TIMESTAMPTZ NOT NULL,
-					"userId"       TEXT NOT NULL,
-					"userName"     TEXT NOT NULL,
-					"fileName"     TEXT NOT NULL,
-					"fileSize"     INT NOT NULL,
-					"filePath"     TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-
-	return postgresDB
 }
 
 func getRoomService(config Config) (*sdk.Connector, *sdk.Room, *sdk.RTC, error) {
@@ -625,8 +245,8 @@ func (s *RoomPlaybackService) start() {
 	router.Use(gin.Recovery())
 	router.GET("/liveness", s.getLiveness)
 	router.GET("/readiness", s.getReadiness)
-	router.POST("/play", s.postPlay)
-	router.POST("/play/:secondsfromstart", s.postPlayFrom)
+	router.POST("/:speed", s.postPlay)
+	router.POST("/:speed/:secondsfromstart", s.postPlayFrom)
 	router.POST("/pause", s.postPause)
 
 	log.Infof("HTTP service starting at %s", s.conf.Playback.Addr)
@@ -641,13 +261,15 @@ func (s *RoomPlaybackService) preparePlayback() {
 		os.Exit(1)
 	}
 
-	peerIds := make(map[string]string)
-	var rows *sql.Rows
-	queryStmt := `SELECT 	"peerId",
+	var queryStmt string
+	// find peers media
+	peerNames := make(map[string]string)
+	var peerRows *sql.Rows
+	queryStmt = `SELECT 	"peerId",
 							"peerName"
 					FROM "` + s.roomRecordSchema + `"."peerEvent" WHERE "roomId"=$1`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
-		rows, err = s.postgresDB.Query(queryStmt, s.roomId)
+		peerRows, err = s.postgresDB.Query(queryStmt, s.roomId)
 		if err == nil {
 			break
 		}
@@ -657,22 +279,79 @@ func (s *RoomPlaybackService) preparePlayback() {
 		log.Errorf("could not query database: %s", err)
 		os.Exit(1)
 	}
-	defer rows.Close()
-	for rows.Next() {
+	defer peerRows.Close()
+	for peerRows.Next() {
 		var peerId string
 		var peerName string
-		err := rows.Scan(&peerId, &peerName)
+		err := peerRows.Scan(&peerId, &peerName)
 		if err != nil {
 			log.Errorf("could not query database: %s", err)
 			os.Exit(1)
 		}
-		peerIds[peerId] = peerName
+		peerNames[peerId] = peerName
+	}
+	for peerId := range peerNames {
+		s.peers = append(s.peers, s.NewPlaybackPeer(peerId, peerNames[peerId], ""))
 	}
 
-	for peerId := range peerIds {
-		s.peers = append(s.peers, s.NewPlaybackPeer(peerId, peerIds[peerId]))
+	// find screen share media
+	orphanRemoteIds := make(map[string]struct{})
+	var trackRows *sql.Rows
+	queryStmt = `SELECT "trackRemoteId"
+					FROM "` + s.roomRecordSchema + `"."track" WHERE "roomId"=$1`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		trackRows, err = s.postgresDB.Query(queryStmt, s.roomId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
 	}
+	if err != nil {
+		log.Errorf("could not query database: %s", err)
+		os.Exit(1)
+	}
+	defer trackRows.Close()
+	for trackRows.Next() {
+		var trackRemoteId string
+		err := trackRows.Scan(&trackRemoteId)
+		if err != nil {
+			log.Errorf("could not query database: %s", err)
+			os.Exit(1)
+		}
+		orphanRemoteIds[trackRemoteId] = struct{}{}
+	}
+	var trackEventRows *sql.Rows
+	queryStmt = `SELECT "trackRemoteIds"
+					FROM "` + s.roomRecordSchema + `"."trackEvent" WHERE "roomId"=$1`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		trackEventRows, err = s.postgresDB.Query(queryStmt, s.roomId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("could not query database: %s", err)
+		os.Exit(1)
+	}
+	defer trackEventRows.Close()
+	for trackEventRows.Next() {
+		var trackRemoteIds pq.StringArray
+		err := trackEventRows.Scan(&trackRemoteIds)
+		if err != nil {
+			log.Errorf("could not query database: %s", err)
+			os.Exit(1)
+		}
+		for _, trackRemoteId := range trackRemoteIds {
+			delete(orphanRemoteIds, trackRemoteId)
+		}
+	}
+	for orphanRemoteId := range orphanRemoteIds {
+		s.peers = append(s.peers, s.NewPlaybackPeer(uuid.NewString(), "", orphanRemoteId))
+	}
+
 	s.chatPayloads = s.getChats(s.roomId)
+	s.lenChatPayloads = len(s.chatPayloads)
 	s.waitPeer.Wait()
 	log.Infof("preparePlayback completed")
 }
@@ -728,9 +407,11 @@ func (s *RoomPlaybackService) getChats(roomId string) ChatPayloads {
 	defer chatrows.Close()
 	for chatrows.Next() {
 		var chat ChatPayload
+		var userId string
+		var name string
 		var text string
-		err := chatrows.Scan(&chat.Uid,
-			&chat.Name,
+		err := chatrows.Scan(&userId,
+			&name,
 			&text,
 			&chat.Timestamp)
 		if err != nil {
@@ -738,6 +419,8 @@ func (s *RoomPlaybackService) getChats(roomId string) ChatPayloads {
 			os.Exit(1)
 		}
 		chat.Text = &text
+		chat.Uid = PLAYBACK_PREFIX + userId
+		chat.Name = PLAYBACK_PREFIX + name
 		chats = append(chats, chat)
 	}
 
@@ -764,10 +447,12 @@ func (s *RoomPlaybackService) getChats(roomId string) ChatPayloads {
 	defer attachmentrows.Close()
 	for attachmentrows.Next() {
 		var attachment ChatPayload
+		var userId string
+		var name string
 		var fileinfo Attachment
 		var filePath string
-		err := chatrows.Scan(&attachment.Uid,
-			&attachment.Name,
+		err := chatrows.Scan(&userId,
+			&name,
 			&fileinfo.Name,
 			&fileinfo.Size,
 			&filePath,
@@ -792,6 +477,8 @@ func (s *RoomPlaybackService) getChats(roomId string) ChatPayloads {
 		}
 		fileinfo.Data = buf.String()
 		attachment.Base64File = &fileinfo
+		attachment.Uid = PLAYBACK_PREFIX + userId
+		attachment.Name = PLAYBACK_PREFIX + name
 		attachments = append(attachments, attachment)
 	}
 
