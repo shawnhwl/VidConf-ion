@@ -20,41 +20,56 @@ func (s *RoomPlaybackService) pausePlayback(ctrl Ctrl) {
 }
 
 func (s *RoomPlaybackService) playbackCtrl(ctrl Ctrl) {
-	if ctrl.isPaused {
+	if ctrl.isPause {
 		s.pausePlayback(ctrl)
 		return
 	}
 	if s.isRunning {
-		if s.speed10 == ctrl.speed10 {
-			if ctrl.skipInterval == -1 {
-				return
-			}
+		if s.speed10 == ctrl.speed10 &&
+			s.isChat == ctrl.isChat &&
+			s.isVideo == ctrl.isVideo &&
+			s.isAudio == ctrl.isAudio &&
+			ctrl.playFrom == -1 {
+			return
 		}
 		s.pausePlayback(ctrl)
 	}
-	if ctrl.skipInterval >= 0 {
-		s.playbackRefTime = s.roomStartTime.Add(time.Duration(ctrl.skipInterval) * time.Second)
-		chatId := 0
-		for ; chatId < s.lenChatPayloads; chatId++ {
-			if s.chatPayloads[chatId].Timestamp.After(s.playbackRefTime) {
-				break
-			}
-			s.sendChat(s.chatPayloads[chatId])
+	if ctrl.playFrom >= 0 {
+		s.playbackRefTime = s.roomStartTime.Add(time.Duration(ctrl.playFrom) * time.Second)
+		if ctrl.isChat {
+			s.batchSendChat()
 		}
-		s.chatId = chatId
+	} else if !s.isChat && ctrl.isChat {
+		s.batchSendChat()
 	}
 	s.speed10 = ctrl.speed10
+	s.isChat = ctrl.isChat
+	s.isVideo = ctrl.isVideo
+	s.isAudio = ctrl.isAudio
 	s.actualRefTime = time.Now().Add(time.Second)
 	for id := range s.peers {
 		s.peers[id].ctrlCh <- Ctrl{
-			isPaused:        false,
-			skipInterval:    0,
+			isPause:         false,
 			speed10:         s.speed10,
+			isVideo:         s.isVideo,
+			isAudio:         s.isAudio,
 			playbackRefTime: s.playbackRefTime,
 			actualRefTime:   s.actualRefTime,
 		}
 	}
 	s.isRunning = true
+}
+
+func (s *RoomPlaybackService) batchSendChat() {
+	chatId := 0
+	for ; chatId < s.lenChatPayloads; chatId++ {
+		if s.chatPayloads[chatId].Timestamp.After(s.playbackRefTime) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+		s.sendChat(s.chatPayloads[chatId])
+	}
+	s.chatId = chatId
 }
 
 func (s *RoomPlaybackService) sendChat(chatPayload ChatPayload) {
@@ -71,14 +86,12 @@ func (s *RoomPlaybackService) sendChat(chatPayload ChatPayload) {
 	}
 	if err != nil {
 		log.Errorf("Error playback chat to playbackId '%s' : %v", s.playbackId, err)
+		return
 	}
 }
 
 func (s *RoomPlaybackService) playbackChat() {
-	if !s.isRunning {
-		return
-	}
-	if s.chatId >= s.lenChatPayloads {
+	if !s.isRunning || !s.isChat || s.chatId >= s.lenChatPayloads {
 		return
 	}
 
@@ -90,19 +103,23 @@ func (s *RoomPlaybackService) playbackChat() {
 }
 
 func (s *RoomPlaybackService) playbackSentry() {
-	s.chatId = 0
-	s.speed10 = time.Duration(10)
+	s.speed10 = PLAYBACK_SPEED10
+	s.isChat = true
+	s.isVideo = true
+	s.isAudio = true
 	s.playbackRefTime = s.roomStartTime
 	s.actualRefTime = time.Now().Add(time.Second)
 	for id := range s.peers {
 		s.peers[id].ctrlCh <- Ctrl{
-			isPaused:        false,
-			skipInterval:    0,
+			isPause:         false,
 			speed10:         s.speed10,
+			isVideo:         s.isVideo,
+			isAudio:         s.isAudio,
 			playbackRefTime: s.playbackRefTime,
 			actualRefTime:   s.actualRefTime,
 		}
 	}
+	s.chatId = 0
 	s.isRunning = true
 
 	for {
@@ -179,6 +196,7 @@ func (s *RoomPlaybackService) httpClient(request *http.Request) error {
 }
 
 func (s *RoomPlaybackService) checkForRoomError() {
+	s.joinRoomCh <- struct{}{}
 	for {
 		<-s.joinRoomCh
 		s.timeReady = ""

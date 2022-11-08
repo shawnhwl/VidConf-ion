@@ -38,6 +38,9 @@ const (
 	LEN_PLAYBACK_PREFIX int    = len(PLAYBACK_PREFIX)
 
 	PLAYBACK_SPEED10 time.Duration = 10
+
+	MIME_VIDEO string = "VIDEO"
+	MIME_AUDIO string = "AUDIO"
 )
 
 func (s *RoomPlaybackService) getLiveness(c *gin.Context) {
@@ -98,12 +101,12 @@ func (s *RoomPlaybackService) postPlay(c *gin.Context) {
 	}
 
 	s.ctrlCh <- Ctrl{
-		isPaused: false,
+		isPause:  false,
 		speed10:  time.Duration(speedf * 10),
 		playFrom: playfromd,
-		chat:     chatb,
-		video:    videob,
-		audio:    audiob,
+		isChat:   chatb,
+		isVideo:  videob,
+		isAudio:  audiob,
 	}
 	c.Status(http.StatusOK)
 }
@@ -116,18 +119,18 @@ func (s *RoomPlaybackService) postPause(c *gin.Context) {
 	}
 
 	s.ctrlCh <- Ctrl{
-		isPaused: true,
+		isPause: true,
 	}
 	c.Status(http.StatusOK)
 }
 
 type Ctrl struct {
-	isPaused        bool
+	isPause         bool
 	speed10         time.Duration
 	playFrom        int
-	chat            bool
-	video           bool
-	audio           bool
+	isChat          bool
+	isVideo         bool
+	isAudio         bool
 	actualRefTime   time.Time
 	playbackRefTime time.Time
 }
@@ -166,11 +169,13 @@ type RoomPlaybackService struct {
 	chatId          int
 
 	waitPeer  *sync.WaitGroup
-	isPlaying bool
 	isRunning bool
 	peers     []*PlaybackPeer
 
 	speed10         time.Duration
+	isChat          bool
+	isVideo         bool
+	isAudio         bool
 	playbackRefTime time.Time
 	actualRefTime   time.Time
 }
@@ -210,14 +215,12 @@ func NewRoomPlaybackService(config Config, quitCh chan os.Signal) *RoomPlaybackS
 		chatId:       0,
 
 		waitPeer:  new(sync.WaitGroup),
-		isPlaying: false,
 		isRunning: false,
 		peers:     make([]*PlaybackPeer, 0),
 	}
 	go s.start()
 	s.preparePlayback()
 	go s.checkForRoomError()
-	s.joinRoomCh <- struct{}{}
 	for {
 		time.Sleep(time.Second)
 		if s.timeReady != "" {
@@ -400,11 +403,11 @@ func (s *RoomPlaybackService) getChats(roomId string) ChatPayloads {
 	var chatrows *sql.Rows
 	queryStmt := `SELECT "userId",
 						 "userName",
-						 "timestamp"
+						 "timestamp",
 						 "text",
 						 "fileName",
 						 "fileSize",
-						 "filePath",
+						 "filePath"
 					 FROM "` + s.roomRecordSchema + `"."chat" WHERE "roomId"=$1`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		chatrows, err = s.postgresDB.Query(queryStmt, roomId)
