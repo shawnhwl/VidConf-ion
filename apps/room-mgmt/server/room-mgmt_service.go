@@ -186,7 +186,7 @@ type ChatPayloads []ChatPayload
 
 type PostPlay struct {
 	Speed    *float32 `json:"speed,omitempty"`
-	Playfrom *int     `json:"playfrom,playfrom"`
+	Playfrom *int     `json:"playfrom,omitempty"`
 	Chat     *bool    `json:"chat,omitempty"`
 	Video    *bool    `json:"video,omitempty"`
 	Audio    *bool    `json:"audio,omitempty"`
