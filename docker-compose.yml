@@ -2,7 +2,7 @@ version: "3.7"
 
 services:
   islb:
-    image: howeli/vidconf-ion_islb:latest
+    image: howeli/vidconf-ion_islb:1.10.0
     build:
       dockerfile: ./docker/islb.Dockerfile
       context: .
@@ -15,7 +15,7 @@ services:
       - ionnet
 
   sfu:
-    image: howeli/vidconf-ion_sfu:latest
+    image: howeli/vidconf-ion_sfu:1.10.0
     build:
       dockerfile: ./docker/sfu.Dockerfile
       context: .
@@ -31,7 +31,7 @@ services:
       - ionnet
 
   signal:
-    image: howeli/vidconf-ion_signal:latest
+    image: howeli/vidconf-ion_signal:1.10.0
     build:
       dockerfile: ./docker/signal.Dockerfile
       context: .
@@ -46,7 +46,7 @@ services:
       - ionnet
 
   app-room:
-    image: howeli/vidconf-ion_app-room:latest
+    image: howeli/vidconf-ion_app-room:1.10.0.1
     build:
       dockerfile: ./docker/app-room.Dockerfile
       context: .
@@ -62,7 +62,7 @@ services:
       - ionnet
 
   app-room-sentry:
-    image: howeli/vidconf-ion_app-room-sentry:latest
+    image: howeli/vidconf-ion_app-room-sentry:0.7.0.1
     build:
       dockerfile: ./docker/app-room-sentry.Dockerfile
       context: .
@@ -79,7 +79,7 @@ services:
       - ionnet
 
   app-room-mgmt:
-    image: howeli/vidconf-ion_app-room-mgmt:latest
+    image: howeli/vidconf-ion_app-room-mgmt:0.7.0.1
     build:
       dockerfile: ./docker/app-room-mgmt.Dockerfile
       context: .
@@ -98,7 +98,7 @@ services:
       - ionnet
 
   web:
-    image: howeli/vidconf-ion-app-web:latest
+    image: howeli/vidconf-ion-app-web:1.1.0
     build:
       dockerfile: ../VidConf-ion-app-web/Dockerfile
       context: ../VidConf-ion-app-web
