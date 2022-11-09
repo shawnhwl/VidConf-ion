@@ -1139,7 +1139,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 						 "text",
 						 "fileName",
 						 "fileSize",
-						 "filePath",
+						 "filePath"
 					 FROM "` + s.roomRecordSchema + `"."chat" WHERE "roomId"=$1`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		chatrows, err = s.postgresDB.Query(queryStmt, roomId)
