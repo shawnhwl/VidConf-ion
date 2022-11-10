@@ -79,7 +79,7 @@ services:
       - ionnet
 
   app-room-mgmt:
-    image: howeli/vidconf-ion_app-room-mgmt:0.7.0.3
+    image: howeli/vidconf-ion_app-room-mgmt:0.7.0.4
     build:
       dockerfile: ./docker/app-room-mgmt.Dockerfile
       context: .

@@ -1135,7 +1135,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 	var chatrows *sql.Rows
 	queryStmt := `SELECT "userId",
 						 "userName",
-						 "timestamp"
+						 "timestamp",
 						 "text",
 						 "fileName",
 						 "fileSize",
