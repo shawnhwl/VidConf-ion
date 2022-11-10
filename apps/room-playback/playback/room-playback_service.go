@@ -280,9 +280,10 @@ func (s *RoomPlaybackService) preparePlayback() {
 	var peerRows *sql.Rows
 	queryStmt = `SELECT 	"peerId",
 							"peerName"
-					FROM "` + s.roomRecordSchema + `"."peerEvent" WHERE "roomId"=$1`
+					FROM "` + s.roomRecordSchema + `"."peerEvent"
+					WHERE "roomId"=$1 AND "state"=$2`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
-		peerRows, err = s.postgresDB.Query(queryStmt, s.roomId)
+		peerRows, err = s.postgresDB.Query(queryStmt, s.roomId, sdk.PeerState_JOIN)
 		if err == nil {
 			break
 		}
@@ -303,8 +304,12 @@ func (s *RoomPlaybackService) preparePlayback() {
 		}
 		peerNames[peerId] = peerName
 	}
+	log.Infof("peers found: %d", len(peerNames))
 	for peerId := range peerNames {
-		s.peers = append(s.peers, s.NewPlaybackPeer(peerId, peerNames[peerId], ""))
+		newPeer := s.NewPlaybackPeer(peerId, peerNames[peerId], "")
+		if newPeer != nil {
+			s.peers = append(s.peers, newPeer)
+		}
 	}
 
 	// find screen share media
@@ -360,12 +365,14 @@ func (s *RoomPlaybackService) preparePlayback() {
 		}
 	}
 	for orphanRemoteId := range orphanRemoteIds {
-		s.peers = append(s.peers, s.NewPlaybackPeer(uuid.NewString(), "", orphanRemoteId))
+		newPeer := s.NewPlaybackPeer(uuid.NewString(), "Screen-Share", orphanRemoteId)
+		if newPeer != nil {
+			s.peers = append(s.peers, newPeer)
+		}
 	}
 
 	s.chatPayloads = s.getChats(s.roomId)
 	s.lenChatPayloads = len(s.chatPayloads)
-	s.waitPeer.Wait()
 	log.Infof("preparePlayback completed")
 }
 

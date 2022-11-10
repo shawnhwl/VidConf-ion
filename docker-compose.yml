@@ -46,7 +46,7 @@ services:
       - ionnet
 
   app-room:
-    image: howeli/vidconf-ion_app-room:1.10.0.1
+    image: howeli/vidconf-ion_app-room:1.10.0.3
     build:
       dockerfile: ./docker/app-room.Dockerfile
       context: .
@@ -62,7 +62,7 @@ services:
       - ionnet
 
   app-room-sentry:
-    image: howeli/vidconf-ion_app-room-sentry:0.7.0.1
+    image: howeli/vidconf-ion_app-room-sentry:0.7.0.3
     build:
       dockerfile: ./docker/app-room-sentry.Dockerfile
       context: .
@@ -79,7 +79,7 @@ services:
       - ionnet
 
   app-room-mgmt:
-    image: howeli/vidconf-ion_app-room-mgmt:0.7.0.2
+    image: howeli/vidconf-ion_app-room-mgmt:0.7.0.3
     build:
       dockerfile: ./docker/app-room-mgmt.Dockerfile
       context: .

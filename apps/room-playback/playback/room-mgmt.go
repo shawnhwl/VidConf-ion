@@ -22,7 +22,7 @@ func (s *RoomPlaybackService) getRoomByPlaybackId(playbackId string) error {
 		time.Sleep(RETRY_DELAY)
 	}
 	if playbackRow.Err() != nil {
-		log.Errorf("could not query database: %s", playbackRow.Err().Error())
+		log.Errorf("could not query database")
 		os.Exit(1)
 	} else {
 		err = playbackRow.Scan(&s.roomId)
@@ -32,7 +32,7 @@ func (s *RoomPlaybackService) getRoomByPlaybackId(playbackId string) error {
 				s.quitCh <- syscall.SIGTERM
 				return err
 			} else {
-				log.Errorf("could not query database: %s", playbackRow.Err().Error())
+				log.Errorf("could not query database")
 				os.Exit(1)
 			}
 		}
@@ -48,7 +48,7 @@ func (s *RoomPlaybackService) getRoomByPlaybackId(playbackId string) error {
 		time.Sleep(RETRY_DELAY)
 	}
 	if roomRow.Err() != nil {
-		log.Errorf("could not query database: %s", roomRow.Err().Error())
+		log.Errorf("could not query database")
 		os.Exit(1)
 	} else {
 		err = roomRow.Scan(&s.roomStartTime)
@@ -58,7 +58,7 @@ func (s *RoomPlaybackService) getRoomByPlaybackId(playbackId string) error {
 				s.quitCh <- syscall.SIGTERM
 				return err
 			} else {
-				log.Errorf("could not query database: %s", roomRow.Err().Error())
+				log.Errorf("could not query database")
 				os.Exit(1)
 			}
 		}

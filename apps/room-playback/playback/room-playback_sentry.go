@@ -12,6 +12,7 @@ import (
 func (s *RoomPlaybackService) pausePlayback(ctrl Ctrl) {
 	if s.isRunning {
 		s.playbackRefTime = s.playbackRefTime.Add(time.Since(s.actualRefTime) * s.speed10 / 10)
+		ctrl.isPause = true
 		for id := range s.peers {
 			s.peers[id].ctrlCh <- ctrl
 		}
@@ -103,6 +104,7 @@ func (s *RoomPlaybackService) playbackChat() {
 }
 
 func (s *RoomPlaybackService) playbackSentry() {
+	s.waitPeer.Wait()
 	s.speed10 = PLAYBACK_SPEED10
 	s.isChat = true
 	s.isVideo = true

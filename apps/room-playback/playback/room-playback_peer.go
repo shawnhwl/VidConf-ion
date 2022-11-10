@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/gob"
-	"os"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,19 +104,32 @@ func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName, orphanRemoteId s
 
 		ctrlCh: make(chan Ctrl, 32),
 	}
-
-	p.preparePlaybackPeer()
-	go p.start()
-	return p
-}
-
-func (p *PlaybackPeer) preparePlaybackPeer() {
 	p.waitPeer.Add(1)
 	defer p.waitPeer.Done()
 
+	err := p.preparePlaybackPeer()
+	if err != nil {
+		return nil
+	}
+	go p.start()
+	for {
+		time.Sleep(10 * time.Millisecond)
+		p.isPublishLock.RLock()
+		isReady := true
+		for key := range p.isPublish {
+			isReady = isReady && p.isPublish[key]
+		}
+		p.isPublishLock.RUnlock()
+		if isReady {
+			break
+		}
+	}
+	return p
+}
+
+func (p *PlaybackPeer) preparePlaybackPeer() error {
 	if p.orphanRemoteId != "" {
-		p.preparePlaybackOrphan()
-		return
+		return p.preparePlaybackOrphan()
 	}
 
 	log.Infof("preparePlaybackPeer peerId '%s'", p.peerId)
@@ -133,15 +146,16 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 		time.Sleep(RETRY_DELAY)
 	}
 	if trackEventRow.Err() != nil {
-		log.Errorf("could not query database: %s", trackEventRow.Err().Error())
-		os.Exit(1)
+		log.Errorf("could not query database")
+		return errors.New("could not query database")
 	}
 	var trackRemoteIds pq.StringArray
 	err = trackEventRow.Scan(&trackRemoteIds)
 	if err != nil {
-		log.Errorf("could not query database: %s", trackEventRow.Err().Error())
-		os.Exit(1)
+		log.Errorf("could not query database")
+		return errors.New("could not query database")
 	}
+	hasTrack := false
 	for _, trackRemoteId := range trackRemoteIds {
 		var trackRow *sql.Row
 		queryStmt = `SELECT "id", "mimeType"
@@ -155,15 +169,15 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 			time.Sleep(RETRY_DELAY)
 		}
 		if trackRow.Err() != nil {
-			log.Errorf("could not query database: %s", trackRow.Err().Error())
-			os.Exit(1)
+			log.Errorf("could not query database")
+			continue
 		}
 		var trackId string
 		var mimeType string
 		err = trackRow.Scan(&trackId, &mimeType)
 		if err != nil {
-			log.Errorf("could not query database: %s", trackRow.Err().Error())
-			os.Exit(1)
+			log.Errorf("could not query database")
+			continue
 		}
 
 		var trackStreamRows *sql.Rows
@@ -181,7 +195,7 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 		}
 		if err != nil {
 			log.Errorf("could not query database: %s", err)
-			os.Exit(1)
+			continue
 		}
 		defer trackStreamRows.Close()
 		trackStreams := make(TrackStreams, 0)
@@ -190,7 +204,7 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 			err := trackStreamRows.Scan(&filePath)
 			if err != nil {
 				log.Errorf("could not query database: %s", err)
-				os.Exit(1)
+				continue
 			}
 			object, err := p.minioClient.GetObject(context.Background(),
 				p.bucketName,
@@ -210,6 +224,9 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 			gob.NewDecoder(buf).Decode(&trackStream)
 			trackStreams = append(trackStreams, trackStream...)
 		}
+		if len(trackStreams) == 0 {
+			continue
+		}
 		sort.Sort(trackStreams)
 		p.trackStreams[trackId] = trackStreams
 		p.lenTrackStreams[trackId] = len(trackStreams)
@@ -225,12 +242,18 @@ func (p *PlaybackPeer) preparePlaybackPeer() {
 		trackCh := make(chan Ctrl, 32)
 		p.trackCh = append(p.trackCh, trackCh)
 		go p.sendTrack(trackId, trackCh)
+		hasTrack = true
 	}
 
+	if !hasTrack {
+		log.Errorf("preparePlaybackPeer peerId '%s' found no usable tracks", p.peerId)
+		return errors.New("found no usable tracks")
+	}
 	log.Infof("preparePlaybackPeer peerId '%s' completed", p.peerId)
+	return nil
 }
 
-func (p *PlaybackPeer) preparePlaybackOrphan() {
+func (p *PlaybackPeer) preparePlaybackOrphan() error {
 	log.Infof("preparePlaybackPeer orphanRemoteId '%s'", p.orphanRemoteId)
 	var err error
 	var trackRow *sql.Row
@@ -245,15 +268,20 @@ func (p *PlaybackPeer) preparePlaybackOrphan() {
 		time.Sleep(RETRY_DELAY)
 	}
 	if trackRow.Err() != nil {
-		log.Errorf("could not query database: %s", trackRow.Err().Error())
-		os.Exit(1)
+		log.Errorf("could not query database")
+		return errors.New("could not query database")
 	}
 	var trackId string
 	var mimeType string
 	err = trackRow.Scan(&trackId, &mimeType)
 	if err != nil {
-		log.Errorf("could not query database: %s", trackRow.Err().Error())
-		os.Exit(1)
+		log.Errorf("could not query database")
+		return errors.New("could not query database")
+	}
+	codecMimeType := strings.ToUpper(mimeType)
+	if !strings.Contains(codecMimeType, MIME_VIDEO) {
+		log.Errorf("orphaned remoteTrackId '%' is not screen share", p.orphanRemoteId)
+		return errors.New("orphaned remoteTrackId is not screen share")
 	}
 
 	var trackStreamRows *sql.Rows
@@ -271,7 +299,7 @@ func (p *PlaybackPeer) preparePlaybackOrphan() {
 	}
 	if err != nil {
 		log.Errorf("could not query database: %s", err)
-		os.Exit(1)
+		return err
 	}
 	defer trackStreamRows.Close()
 	trackStreams := make(TrackStreams, 0)
@@ -280,7 +308,7 @@ func (p *PlaybackPeer) preparePlaybackOrphan() {
 		err := trackStreamRows.Scan(&filePath)
 		if err != nil {
 			log.Errorf("could not query database: %s", err)
-			os.Exit(1)
+			continue
 		}
 		object, err := p.minioClient.GetObject(context.Background(),
 			p.bucketName,
@@ -300,6 +328,9 @@ func (p *PlaybackPeer) preparePlaybackOrphan() {
 		gob.NewDecoder(buf).Decode(&trackStream)
 		trackStreams = append(trackStreams, trackStream...)
 	}
+	if len(trackStreams) == 0 {
+		return errors.New("found no usable tracks")
+	}
 	sort.Sort(trackStreams)
 	p.trackStreams[trackId] = trackStreams
 	p.lenTrackStreams[trackId] = len(trackStreams)
@@ -310,13 +341,14 @@ func (p *PlaybackPeer) preparePlaybackOrphan() {
 		p.peerId)
 	if err != nil {
 		log.Errorf("error creating TrackLocal: %s", err.Error())
-		return
+		return err
 	}
 	trackCh := make(chan Ctrl, 32)
 	p.trackCh = append(p.trackCh, trackCh)
 	go p.sendTrack(trackId, trackCh)
 
 	log.Infof("preparePlaybackPeer orphanRemoteId '%s' completed", p.orphanRemoteId)
+	return nil
 }
 
 func (p *PlaybackPeer) start() {
@@ -458,10 +490,6 @@ func (p *PlaybackPeer) openRoom() {
 }
 
 func (p *PlaybackPeer) joinRoom() {
-	if p.orphanRemoteId != "" {
-		p.onRoomJoin(true, sdk.RoomInfo{}, nil)
-		return
-	}
 	log.Infof("--- Joining Room ---")
 	var err error
 	p.roomService.OnJoin = p.onRoomJoin

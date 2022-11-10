@@ -110,7 +110,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 	testTracks := make([]TestTrack, 0)
 	for id := 0; id < 100; id++ {
 		timeNow := time.Now()
-		testTracks = append(testTracks, TestTrack{timeNow, []byte(timeNow.String())})
+		testTracks = append(testTracks, TestTrack{timeNow, []byte(testString)})
 	}
 	for id := 0; id < 100; id += 5 {
 		var testTrackData bytes.Buffer

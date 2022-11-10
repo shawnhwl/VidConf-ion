@@ -465,7 +465,10 @@ type PeerEvent struct {
 }
 
 func (r *Room) insertPeerEvent(peerEvent PeerEvent) {
-	if r.postgresDB == nil || r.minioClient == nil {
+	if r.postgresDB == nil &&
+		r.roomRecordSchema == "" &&
+		r.minioClient == nil &&
+		r.bucketName == "" {
 		return
 	}
 	var err error
@@ -521,6 +524,12 @@ type Attachment struct {
 }
 
 func (r *Room) insertChat(data []byte) {
+	if r.postgresDB == nil &&
+		r.roomRecordSchema == "" &&
+		r.minioClient == nil &&
+		r.bucketName == "" {
+		return
+	}
 	var err error
 	var chatPayload ChatPayload
 	err = json.Unmarshal(data, &chatPayload)
@@ -595,7 +604,7 @@ func (r *Room) storeChat(chatPayload ChatPayload) {
 					"timestamp",
 					"userId",
 					"userName",
-					"text,
+					"text",
 					"fileName",
 					"fileSize",
 					"filePath")

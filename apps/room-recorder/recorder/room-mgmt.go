@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"strings"
 	"syscall"
@@ -38,8 +39,8 @@ func (s *RoomRecorderService) getRoomsByRoomid(roomId string) Room {
 		time.Sleep(RETRY_DELAY)
 	}
 	if row.Err() != nil {
-		log.Errorf("could not query database: %s", row.Err().Error())
-		err = row.Err()
+		log.Errorf("could not query database")
+		err = errors.New("could not query database")
 	} else {
 		err = row.Scan(&room.status, &room.startTime)
 		if err != nil {
@@ -48,7 +49,8 @@ func (s *RoomRecorderService) getRoomsByRoomid(roomId string) Room {
 				os.Exit(1)
 				return Room{}
 			} else {
-				log.Errorf("could not query database: %s", row.Err().Error())
+				log.Errorf("could not query database")
+				err = errors.New("could not query database")
 			}
 		}
 	}

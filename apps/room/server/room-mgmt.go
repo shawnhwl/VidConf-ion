@@ -41,8 +41,8 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 			time.Sleep(RETRY_DELAY)
 		}
 		if row.Err() != nil {
-			log.Errorf("could not query database: %s", row.Err().Error())
-			return "", row.Err()
+			log.Errorf("could not query database")
+			return "", errors.New("could not query database")
 		}
 		err := row.Scan(&booking.name)
 		if err != nil {
@@ -68,8 +68,8 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 			time.Sleep(RETRY_DELAY)
 		}
 		if row.Err() != nil {
-			log.Errorf("could not query database: %s", row.Err().Error())
-			return "", row.Err()
+			log.Errorf("could not query database")
+			return "", errors.New("could not query database")
 		}
 		err := row.Scan(&booking.name,
 			&booking.status,
