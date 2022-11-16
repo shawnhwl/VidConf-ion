@@ -382,7 +382,6 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 
 	isRunning := false
 	isPublishing := false
-	isVideoOff := false
 	var err error
 	var rtpSender *webrtc.RTPSender = nil
 	var speed10 time.Duration
@@ -416,7 +415,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 				}
 			} else {
 				if (isAudioCodec && ctrl.isAudio) ||
-					(isVideoCodec && (ctrl.isVideo || ctrl.isAudio)) ||
+					(isVideoCodec && ctrl.isVideo) ||
 					(isScreenShare && ctrl.isVideo) {
 					if !isPublishing {
 						rtpSender, err = p.PublishTrackLocal(trackInfo, p.trackLocals[key])
@@ -425,7 +424,6 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 						}
 					}
 					isRunning = true
-					isVideoOff = isVideoCodec && !ctrl.isVideo
 					speed10 = ctrl.speed10
 					playbackRefTime = ctrl.playbackRefTime
 					actualRefTime = ctrl.actualRefTime
@@ -481,7 +479,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 					isPublishing = true
 				}
 			}
-			if isPublishing && !isVideoOff {
+			if isPublishing {
 				_, err := p.trackLocals[key].Write(trackStreams[trackIdx].Data)
 				if err != nil {
 					log.Errorf("send err: %s", err.Error())
@@ -576,6 +574,7 @@ func (p *PlaybackPeer) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
 }
 
 func (p *PlaybackPeer) onRTCTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	log.Infof("%s onRTCTrack %s", p.peerName, track.Codec().MimeType)
 }
 
 func (p *PlaybackPeer) onRTCError(err error) {
@@ -584,6 +583,7 @@ func (p *PlaybackPeer) onRTCError(err error) {
 }
 
 func (p *PlaybackPeer) onRTCTrackEvent(event sdk.TrackEvent) {
+	log.Infof("%s onRTCTrackEvent %+v", p.peerName, event.Tracks)
 }
 
 func (p *PlaybackPeer) onRoomPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
