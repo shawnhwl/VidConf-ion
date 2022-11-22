@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 	minio "github.com/minio/minio-go/v7"
 	log "github.com/pion/ion-log"
@@ -67,7 +66,7 @@ type PlaybackPeer struct {
 
 	trackStreams    map[string]TrackStreams
 	lenTrackStreams map[string]int
-	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
+	mimeTypes       map[string]string
 	trackCh         []chan Ctrl
 
 	ctrlCh chan Ctrl
@@ -99,7 +98,7 @@ func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName, orphanRemoteId s
 
 		trackStreams:    make(map[string]TrackStreams),
 		lenTrackStreams: make(map[string]int),
-		trackLocals:     make(map[string]*webrtc.TrackLocalStaticRTP),
+		mimeTypes:       make(map[string]string),
 		trackCh:         make([]chan Ctrl, 0),
 
 		ctrlCh: make(chan Ctrl, 32),
@@ -225,14 +224,7 @@ func (p *PlaybackPeer) preparePlaybackPeer() error {
 		sort.Sort(trackStreams)
 		p.trackStreams[trackId] = trackStreams
 		p.lenTrackStreams[trackId] = len(trackStreams)
-		p.trackLocals[trackId], err = webrtc.NewTrackLocalStaticRTP(
-			webrtc.RTPCodecCapability{MimeType: mimeType},
-			mimeType+uuid.NewString(),
-			p.peerId)
-		if err != nil {
-			log.Errorf("error creating TrackLocal: %s", err.Error())
-			continue
-		}
+		p.mimeTypes[trackId] = mimeType
 		trackCh := make(chan Ctrl, 32)
 		p.trackCh = append(p.trackCh, trackCh)
 		go p.sendTrack(trackId, trackCh)
@@ -328,10 +320,7 @@ func (p *PlaybackPeer) preparePlaybackOrphan() error {
 	sort.Sort(trackStreams)
 	p.trackStreams[trackId] = trackStreams
 	p.lenTrackStreams[trackId] = len(trackStreams)
-	p.trackLocals[trackId], err = webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: mimeType},
-		mimeType+uuid.NewString(),
-		p.peerId)
+	p.mimeTypes[trackId] = mimeType
 	if err != nil {
 		log.Errorf("error creating TrackLocal: %s", err.Error())
 		return err
@@ -365,7 +354,7 @@ func (p *PlaybackPeer) start() {
 }
 
 func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
-	codecMimeType := strings.ToUpper(p.trackLocals[key].Codec().MimeType)
+	codecMimeType := strings.ToUpper(p.mimeTypes[key])
 	isAudioCodec := false
 	isVideoCodec := false
 	isScreenShare := false
@@ -384,6 +373,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 	isPublishing := false
 	var err error
 	var rtpSender *webrtc.RTPSender = nil
+	var trackLocal *webrtc.TrackLocalStaticRTP = nil
 	var speed10 time.Duration
 	var playbackRefTime time.Time
 	var actualRefTime time.Time
@@ -395,7 +385,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 		trackInfo = "orphanId"
 	}
 	trackInfo = trackInfo +
-		"/" + p.trackLocals[key].Codec().MimeType +
+		"/" + p.mimeTypes[key] +
 		"/'" + key +
 		"'/isAudioCodec=" + strconv.FormatBool(isAudioCodec) +
 		"/isVideoCodec=" + strconv.FormatBool(isVideoCodec) +
@@ -412,13 +402,14 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 					if err != nil {
 						log.Errorf("error un-publishing %s", trackInfo)
 					}
+					trackLocal = nil
 				}
 			} else {
 				if (isAudioCodec && ctrl.isAudio) ||
 					(isVideoCodec && ctrl.isVideo) ||
 					(isScreenShare && ctrl.isVideo) {
 					if !isPublishing {
-						rtpSender, err = p.PublishTrackLocal(trackInfo, p.trackLocals[key])
+						trackLocal, rtpSender, err = p.publishTrackLocal(trackInfo, p.mimeTypes[key])
 						if err == nil {
 							isPublishing = true
 						}
@@ -466,6 +457,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 					if err != nil {
 						log.Errorf("error un-publishing %s", trackInfo)
 					}
+					trackLocal = nil
 				}
 				continue
 			}
@@ -474,13 +466,13 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 				continue
 			}
 			if !isPublishing {
-				rtpSender, err = p.PublishTrackLocal(trackInfo, p.trackLocals[key])
+				trackLocal, rtpSender, err = p.publishTrackLocal(trackInfo, p.mimeTypes[key])
 				if err == nil {
 					isPublishing = true
 				}
 			}
 			if isPublishing {
-				_, err := p.trackLocals[key].Write(trackStreams[trackIdx].Data)
+				_, err := trackLocal.Write(trackStreams[trackIdx].Data)
 				if err != nil {
 					log.Errorf("send err: %s", err.Error())
 				}
@@ -490,16 +482,28 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 	}
 }
 
-func (p *PlaybackPeer) PublishTrackLocal(trackInfo string, trackLocal *webrtc.TrackLocalStaticRTP) (*webrtc.RTPSender, error) {
+func (p *PlaybackPeer) publishTrackLocal(trackInfo string, mimeType string) (
+	*webrtc.TrackLocalStaticRTP,
+	*webrtc.RTPSender,
+	error) {
 	if !p.isRoomJoined {
-		return nil, errors.New("room is not joined")
+		log.Errorf("room is not joined")
+		return nil, nil, errors.New("room is not joined")
+	}
+	trackLocal, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: mimeType},
+		mimeType+sdk.RandomKey(8),
+		p.peerId)
+	if err != nil {
+		log.Errorf("error creating TrackLocal: %s", err.Error())
+		return nil, nil, errors.New("error creating TrackLocal")
 	}
 	rtpSenders, err := p.roomRTC.Publish(trackLocal)
 	if err != nil || rtpSenders[0] == nil {
 		log.Errorf("error publishing %s", trackInfo)
-		return nil, errors.New("error publishing trackLocal")
+		return nil, nil, errors.New("error publishing trackLocal")
 	}
-	return rtpSenders[0], nil
+	return trackLocal, rtpSenders[0], nil
 }
 
 func (p *PlaybackPeer) closeRoom() {
