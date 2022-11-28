@@ -152,6 +152,17 @@ services:
     networks:
       - ionnet
 
+  minio:
+    image: quay.io/minio/minio
+    command: server /data --console-address ":9001"
+    volumes:
+      - "/mnt/data:/data"
+    ports:
+      - 9000:9000
+      - 9001:9001
+    networks:
+      - ionnet
+
 networks:
   ionnet:
     name: ionnet

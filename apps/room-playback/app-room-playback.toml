@@ -36,7 +36,7 @@ url = "http://vidconf:7073"
 # The address the monitoring server will listen on.
 addr = "0.0.0.0:7083"
 # PlaybackId to broadcast playback
-playbackId = "bac00cab-eb5d-454d-b3bf-11dbb1cf9896"
+playbackId = "bac00cab-444b-42a3-828c-9631a916887e"
 # Check for empty room to close playback
 checkForEmptyRoom = false
 # UserId and UserName used by system to join the room sessions

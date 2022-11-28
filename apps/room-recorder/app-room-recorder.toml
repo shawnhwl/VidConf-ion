@@ -32,7 +32,7 @@ addr = "vidconf:5551"
 # The address the monitoring server will listen on.
 addr = "0.0.0.0:7081"
 # Roomid to record session
-roomid = "28c709c3-a97d-409a-b03f-17d75d7e8b54"
+roomid = "bac00cab-444b-42a3-828c-9631a916887e"
 # time in seconds per chopped section
 choppedInSeconds = 5
 # UserId and UserName used by system to join the room sessions
