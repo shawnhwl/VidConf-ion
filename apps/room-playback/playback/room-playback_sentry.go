@@ -67,7 +67,7 @@ func (s *RoomPlaybackService) batchSendChat() {
 		if s.chatPayloads[chatId].Timestamp.After(s.playbackRefTime) {
 			break
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		s.sendChat(s.chatPayloads[chatId])
 	}
 	s.chatId = chatId
