@@ -321,10 +321,6 @@ func (p *PlaybackPeer) preparePlaybackOrphan() error {
 	p.trackStreams[trackId] = trackStreams
 	p.lenTrackStreams[trackId] = len(trackStreams)
 	p.mimeTypes[trackId] = mimeType
-	if err != nil {
-		log.Errorf("error creating TrackLocal: %s", err.Error())
-		return err
-	}
 	trackCh := make(chan Ctrl, 32)
 	p.trackCh = append(p.trackCh, trackCh)
 	go p.sendTrack(trackId, trackCh)
@@ -371,8 +367,9 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 
 	isRunning := false
 	isPublishing := false
+	needDummy := false
 	var err error
-	var rtpSender *webrtc.RTPSender = nil
+	var rtpTransceivers []*webrtc.RTPTransceiver = nil
 	var trackLocal *webrtc.TrackLocalStaticRTP = nil
 	var speed10 time.Duration
 	var playbackRefTime time.Time
@@ -398,18 +395,22 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 				isRunning = false
 				if isPublishing {
 					isPublishing = false
-					err = p.roomRTC.UnPublish(rtpSender)
-					if err != nil {
-						log.Errorf("error un-publishing %s", trackInfo)
+					for _, rtpTransceiver := range rtpTransceivers {
+						err = p.roomRTC.UnPublish(rtpTransceiver)
+						if err != nil {
+							log.Errorf("error un-publishing %s", trackInfo)
+						}
 					}
+					rtpTransceivers = nil
 					trackLocal = nil
 				}
 			} else {
 				if (isAudioCodec && ctrl.isAudio) ||
 					(isVideoCodec && ctrl.isVideo) ||
 					(isScreenShare && ctrl.isVideo) {
+					needDummy = isAudioCodec && !ctrl.isVideo
 					if !isPublishing {
-						trackLocal, rtpSender, err = p.publishTrackLocal(trackInfo, p.mimeTypes[key])
+						trackLocal, rtpTransceivers, err = p.publishTrackLocal(trackInfo, p.mimeTypes[key], needDummy)
 						if err == nil {
 							isPublishing = true
 						}
@@ -453,10 +454,13 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 			if trackIdx >= maxTrackIdx {
 				if isPublishing {
 					isPublishing = false
-					err = p.roomRTC.UnPublish(rtpSender)
-					if err != nil {
-						log.Errorf("error un-publishing %s", trackInfo)
+					for _, rtpTransceiver := range rtpTransceivers {
+						err = p.roomRTC.UnPublish(rtpTransceiver)
+						if err != nil {
+							log.Errorf("error un-publishing %s", trackInfo)
+						}
 					}
+					rtpTransceivers = nil
 					trackLocal = nil
 				}
 				continue
@@ -466,7 +470,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 				continue
 			}
 			if !isPublishing {
-				trackLocal, rtpSender, err = p.publishTrackLocal(trackInfo, p.mimeTypes[key])
+				trackLocal, rtpTransceivers, err = p.publishTrackLocal(trackInfo, p.mimeTypes[key], needDummy)
 				if err == nil {
 					isPublishing = true
 				}
@@ -482,9 +486,9 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 	}
 }
 
-func (p *PlaybackPeer) publishTrackLocal(trackInfo string, mimeType string) (
+func (p *PlaybackPeer) publishTrackLocal(trackInfo string, mimeType string, needDummy bool) (
 	*webrtc.TrackLocalStaticRTP,
-	*webrtc.RTPSender,
+	[]*webrtc.RTPTransceiver,
 	error) {
 	if !p.isRoomJoined {
 		log.Errorf("room is not joined")
@@ -498,12 +502,30 @@ func (p *PlaybackPeer) publishTrackLocal(trackInfo string, mimeType string) (
 		log.Errorf("error creating TrackLocal: %s", err.Error())
 		return nil, nil, errors.New("error creating TrackLocal")
 	}
-	rtpSenders, err := p.roomRTC.Publish(trackLocal)
-	if err != nil || rtpSenders[0] == nil {
-		log.Errorf("error publishing %s", trackInfo)
-		return nil, nil, errors.New("error publishing trackLocal")
+
+	var rtpTransceivers []*webrtc.RTPTransceiver
+	if needDummy {
+		trackDummy, err := webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: MIME_VP8},
+			MIME_VP8+sdk.RandomKey(8),
+			p.peerId)
+		if err != nil {
+			log.Errorf("error creating TrackLocal: %s", err.Error())
+			return nil, nil, errors.New("error creating TrackLocal")
+		}
+		rtpTransceivers, err = p.roomRTC.Publish(trackLocal, trackDummy)
+		if err != nil {
+			log.Errorf("error publishing %s", trackInfo)
+			return nil, nil, errors.New("error publishing trackLocal")
+		}
+	} else {
+		rtpTransceivers, err = p.roomRTC.Publish(trackLocal)
+		if err != nil {
+			log.Errorf("error publishing %s", trackInfo)
+			return nil, nil, errors.New("error publishing trackLocal")
+		}
 	}
-	return trackLocal, rtpSenders[0], nil
+	return trackLocal, rtpTransceivers, nil
 }
 
 func (p *PlaybackPeer) closeRoom() {

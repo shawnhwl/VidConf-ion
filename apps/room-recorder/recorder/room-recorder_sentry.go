@@ -175,11 +175,8 @@ func getRoomService(config Config) (*sdk.Connector, *sdk.Room, *sdk.RTC, error) 
 		return nil, nil, nil, errors.New("")
 	}
 	roomService := sdk.NewRoom(sdkConnector)
-	roomRTC, err := sdk.NewRTC(sdkConnector)
-	if err != nil {
-		log.Errorf("rtc connector fail: %s", err)
-		return nil, nil, nil, errors.New("")
-	}
+	roomRTC := sdk.NewRTC(sdkConnector)
+
 	return sdkConnector, roomService, roomRTC, nil
 }
 

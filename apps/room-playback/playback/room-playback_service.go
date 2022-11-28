@@ -21,6 +21,7 @@ import (
 	sdk "github.com/pion/ion-sdk-go"
 	minioService "github.com/pion/ion/apps/minio"
 	postgresService "github.com/pion/ion/apps/postgres"
+	"github.com/pion/webrtc/v3"
 )
 
 const (
@@ -41,6 +42,7 @@ const (
 
 	MIME_VIDEO string = "VIDEO"
 	MIME_AUDIO string = "AUDIO"
+	MIME_VP8   string = webrtc.MimeTypeVP8
 )
 
 func (s *RoomPlaybackService) getLiveness(c *gin.Context) {
@@ -244,11 +246,8 @@ func getRoomService(config Config) (*sdk.Connector, *sdk.Room, *sdk.RTC, error) 
 		return nil, nil, nil, errors.New("")
 	}
 	roomService := sdk.NewRoom(sdkConnector)
-	roomRTC, err := sdk.NewRTC(sdkConnector)
-	if err != nil {
-		log.Errorf("rtc connector fail: %s", err)
-		return nil, nil, nil, errors.New("")
-	}
+	roomRTC := sdk.NewRTC(sdkConnector)
+
 	return sdkConnector, roomService, roomRTC, nil
 }
 
