@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -51,6 +52,20 @@ const (
 
 	RECONNECTION_INTERVAL time.Duration = 10 * time.Second
 )
+
+func (s *RoomMgmtService) getLiveness(c *gin.Context) {
+	log.Infof("GET /liveness")
+	c.String(http.StatusOK, "Live since %s", s.timeLive)
+}
+
+func (s *RoomMgmtService) getReadiness(c *gin.Context) {
+	log.Infof("GET /readiness")
+	if s.timeReady == "" {
+		c.String(http.StatusInternalServerError, NOT_READY)
+		return
+	}
+	c.String(http.StatusOK, "Ready since %s", s.timeReady)
+}
 
 type Announcement struct {
 	id                    string
@@ -154,68 +169,6 @@ type RoomRecord struct {
 	name      string
 	startTime time.Time
 	endTime   time.Time
-}
-
-type GetChats struct {
-	Id          string    `json:"id"`
-	Name        string    `json:"name"`
-	StartTime   time.Time `json:"startTime"`
-	RecordCount int       `json:"recordCount"`
-}
-
-type GetChatRange struct {
-	Msg ChatPayloads `json:"msg"`
-}
-
-type ChatPayload struct {
-	Uid        string      `json:"uid"`
-	Name       string      `json:"name"`
-	Text       *string     `json:"text,omitempty"`
-	Timestamp  time.Time   `json:"timestamp"`
-	Base64File *Attachment `json:"base64File,omitempty"`
-}
-
-type Attachment struct {
-	Name     string  `json:"name"`
-	Size     int     `json:"size"`
-	Data     string  `json:"data"`
-	FilePath *string `json:"filePath,omitempty"`
-}
-
-type ChatPayloads []ChatPayload
-
-type PostPlay struct {
-	Speed    *float32 `json:"speed,omitempty"`
-	Playfrom *int     `json:"playfrom,omitempty"`
-	Chat     *bool    `json:"chat,omitempty"`
-	Video    *bool    `json:"video,omitempty"`
-	Audio    *bool    `json:"audio,omitempty"`
-}
-
-func (p ChatPayloads) Len() int {
-	return len(p)
-}
-
-func (p ChatPayloads) Less(i, j int) bool {
-	return p[i].Timestamp.Before(p[j].Timestamp)
-}
-
-func (p ChatPayloads) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
-}
-
-func (s *RoomMgmtService) getLiveness(c *gin.Context) {
-	log.Infof("GET /liveness")
-	c.String(http.StatusOK, "Live since %s", s.timeLive)
-}
-
-func (s *RoomMgmtService) getReadiness(c *gin.Context) {
-	log.Infof("GET /readiness")
-	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
-		return
-	}
-	c.String(http.StatusOK, "Ready since %s", s.timeReady)
 }
 
 func (s *RoomMgmtService) postRooms(c *gin.Context) {
@@ -755,6 +708,46 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 }
 
 // chat history retrieval
+type GetChats struct {
+	Id          string    `json:"id"`
+	Name        string    `json:"name"`
+	StartTime   time.Time `json:"startTime"`
+	RecordCount int       `json:"recordCount"`
+}
+
+type GetChatRange struct {
+	Msg ChatPayloads `json:"msg"`
+}
+
+type ChatPayload struct {
+	Uid        string      `json:"uid"`
+	Name       string      `json:"name"`
+	Text       *string     `json:"text,omitempty"`
+	Timestamp  time.Time   `json:"timestamp"`
+	Base64File *Attachment `json:"base64File,omitempty"`
+}
+
+type Attachment struct {
+	Name     string  `json:"name"`
+	Size     int     `json:"size"`
+	Data     string  `json:"data"`
+	FilePath *string `json:"filePath,omitempty"`
+}
+
+type ChatPayloads []ChatPayload
+
+func (p ChatPayloads) Len() int {
+	return len(p)
+}
+
+func (p ChatPayloads) Less(i, j int) bool {
+	return p[i].Timestamp.Before(p[j].Timestamp)
+}
+
+func (p ChatPayloads) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+
 func (s *RoomMgmtService) getRoomsByRoomidChatinfo(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/chats", roomId)
@@ -913,6 +906,14 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 }
 
 // playback
+type PostPlay struct {
+	Speed    *float32 `json:"speed,omitempty"`
+	Playfrom *int     `json:"playfrom,omitempty"`
+	Chat     *bool    `json:"chat,omitempty"`
+	Video    *bool    `json:"video,omitempty"`
+	Audio    *bool    `json:"audio,omitempty"`
+}
+
 func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("POST /playback/rooms/%s", roomId)
@@ -1093,6 +1094,337 @@ func (s *RoomMgmtService) deletePlayback(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// metadata
+type PatchMetadata struct {
+	Data map[string]interface{} `json:"metadata"`
+}
+
+type GetMetadata struct {
+	Id        string                 `json:"id"`
+	Timestamp time.Time              `json:"timestamp"`
+	Data      map[string]interface{} `json:"metadata"`
+}
+
+type GetAllMetadata struct {
+	Data []GetMetadata `json:"metadata"`
+}
+
+func (s *RoomMgmtService) postMetadata(c *gin.Context) {
+	roomId := c.Param("roomid")
+	log.Infof("POST /rooms/%s/metadata", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	_, err := s.queryRoomRecord(roomId)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			log.Warnf(s.roomNotFound(roomId))
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+
+	var patchMetadata PatchMetadata
+	if err := c.ShouldBindJSON(&patchMetadata); err != nil {
+		log.Warnf(err.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "JSON:" + err.Error()})
+		return
+	}
+	requestJSON, err := json.MarshalIndent(patchMetadata, "", "    ")
+	if err != nil {
+		log.Errorf(err.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	log.Infof("request:\n%s", string(requestJSON))
+	requestJSON, err = json.Marshal(patchMetadata.Data)
+	if err != nil {
+		log.Errorf(err.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."metadata"( "id",
+																		"roomId",
+																		"timestamp",
+																		"data")
+					VALUES($1, $2, $3, $4)`
+	id := uuid.NewString()
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = s.postgresDB.Exec(insertStmt, id, roomId, time.Now(), requestJSON)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), DUP_PK) {
+			id = uuid.NewString()
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		errorString := fmt.Sprintf("could not insert into database: %s", err)
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+
+	log.Infof("posted metadata to roomId '%s'", roomId)
+	c.Status(http.StatusOK)
+}
+
+func (s *RoomMgmtService) getMetadata(c *gin.Context) {
+	roomId := c.Param("roomid")
+	log.Infof("GET /rooms/%s/metadata", roomId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	_, err := s.queryRoomRecord(roomId)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			log.Warnf(s.roomNotFound(roomId))
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+
+	allMetadata, err := s.getAllMetadata(roomId, c)
+	if err != nil {
+		return
+	}
+
+	log.Infof("queried roomId '%s'", roomId)
+	c.JSON(http.StatusOK, allMetadata)
+}
+
+func (s *RoomMgmtService) patchMetadata(c *gin.Context) {
+	roomId := c.Param("roomid")
+	metadataId := c.Param("id")
+	log.Infof("PATCH /rooms/%s/metadata/%s", roomId, metadataId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	_, err := s.queryRoomRecord(roomId)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			log.Warnf(s.roomNotFound(roomId))
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+	queryStmt := `SELECT "data"
+					 FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1 AND "id"=$2`
+	var row *sql.Row
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		row = s.postgresDB.QueryRow(queryStmt, roomId, metadataId)
+		if row.Err() == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if row.Err() != nil {
+		errorString := fmt.Sprintf("could not query database: %s", row.Err())
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+	dataJSON := make([]byte, 2048)
+	err = row.Scan(&dataJSON)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			log.Warnf(s.metadataNotFound(metadataId))
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.metadataNotFound(metadataId)})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+
+	var patchMetadata PatchMetadata
+	if err := c.ShouldBindJSON(&patchMetadata); err != nil {
+		log.Warnf(err.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "JSON:" + err.Error()})
+		return
+	}
+	requestJSON, err := json.MarshalIndent(patchMetadata.Data, "", "    ")
+	if err != nil {
+		log.Errorf(err.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	log.Infof("patch request:\n%s", string(requestJSON))
+
+	dataJSON, err = jsonpatch.MergePatch(dataJSON, requestJSON)
+	if err != nil {
+		log.Errorf(err.Error())
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	updateStmt := `UPDATE "` + s.roomRecordSchema + `"."metadata"
+					SET "data"=$1 WHERE "id"=$2`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			dataJSON,
+			metadataId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		errorString := fmt.Sprintf("could not update database: %s", err)
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+
+	allMetadata, err := s.getAllMetadata(roomId, c)
+	if err != nil {
+		return
+	}
+
+	log.Infof("patched metadataId '%s'", metadataId)
+	c.JSON(http.StatusOK, allMetadata)
+}
+
+func (s *RoomMgmtService) deleteMetadata(c *gin.Context) {
+	roomId := c.Param("roomid")
+	metadataId := c.Param("id")
+	log.Infof("DELETE /rooms/%s/metadata/%s", roomId, metadataId)
+	if s.timeReady == "" {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		return
+	}
+
+	_, err := s.queryRoomRecord(roomId)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			log.Warnf(s.roomNotFound(roomId))
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+	queryStmt := `SELECT "id"
+					 FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1 AND "id"=$2`
+	var row *sql.Row
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		row = s.postgresDB.QueryRow(queryStmt, roomId, metadataId)
+		if row.Err() == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if row.Err() != nil {
+		errorString := fmt.Sprintf("could not query database: %s", row.Err())
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+	var id string
+	err = row.Scan(&id)
+	if err != nil {
+		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			log.Warnf(s.metadataNotFound(metadataId))
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.metadataNotFound(metadataId)})
+		} else {
+			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		}
+		return
+	}
+	deleteStmt := `DELETE FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1 AND "id"=$2`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = s.postgresDB.Exec(deleteStmt, roomId, metadataId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		errorString := fmt.Sprintf("could not delete from database: %s", err.Error())
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+
+	log.Infof("deleted metadataId '%s'", metadataId)
+	c.Status(http.StatusOK)
+}
+
+// helper functions
+func (s *RoomMgmtService) getAllMetadata(roomId string, c *gin.Context) (GetAllMetadata, error) {
+	var getAllMetadata GetAllMetadata
+	getAllMetadata.Data = make([]GetMetadata, 0)
+	var err error
+	var metadatarows *sql.Rows
+	queryStmt := `SELECT "id",
+						 "timestamp",
+						 "data"
+					 FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		metadatarows, err = s.postgresDB.Query(queryStmt, roomId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		errorString := fmt.Sprintf("could not query database: %s", err)
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return GetAllMetadata{}, err
+	}
+	defer metadatarows.Close()
+	for metadatarows.Next() {
+		var metadata GetMetadata
+		data := make([]byte, 2048)
+		err := metadatarows.Scan(&metadata.Id,
+			&metadata.Timestamp,
+			&data)
+		if err != nil {
+			errorString := fmt.Sprintf("could not query database: %s", err)
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+			return GetAllMetadata{}, err
+		}
+		metadata.Data = make(map[string]interface{})
+		err = json.Unmarshal(data, &metadata.Data)
+		if err != nil {
+			errorString := fmt.Sprintf("could not query database: %s", err)
+			log.Errorf(errorString)
+			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+			return GetAllMetadata{}, err
+		}
+		getAllMetadata.Data = append(getAllMetadata.Data, metadata)
+	}
+
+	return getAllMetadata, nil
+}
+
 func (s *RoomMgmtService) getPlaybackUuid(isPlayback bool) string {
 	id := uuid.NewString()
 	if isPlayback {
@@ -1103,6 +1435,14 @@ func (s *RoomMgmtService) getPlaybackUuid(isPlayback bool) string {
 		}
 	}
 	return id
+}
+
+func (s *RoomMgmtService) metadataNotFound(metadataId string) string {
+	return "MetadataId '" + metadataId + "' not found in database"
+}
+
+func (s *RoomMgmtService) roomNotReady(roomId string) string {
+	return "RoomId '" + roomId + "' not found in database, maybe room session not started yet"
 }
 
 func (s *RoomMgmtService) roomNotFound(roomId string) string {
@@ -2111,6 +2451,11 @@ func (s *RoomMgmtService) start() {
 	router.POST("/playback/:playbackid/play", s.postPlaybackPlay)
 	router.POST("/playback/:playbackid/pause", s.postPlaybackPause)
 	router.DELETE("/playback/:playbackid", s.deletePlayback)
+	// metadata
+	router.POST("/rooms/:roomid/metadata", s.postMetadata)
+	router.GET("/rooms/:roomid/metadata", s.getMetadata)
+	router.PATCH("/rooms/:roomid/metadata/:id", s.patchMetadata)
+	router.DELETE("/rooms/:roomid/metadata/:id", s.deleteMetadata)
 
 	log.Infof("HTTP service starting at %s", s.conf.RoomMgmt.Addr)
 	log.Errorf("%s", router.Run(s.conf.RoomMgmt.Addr))

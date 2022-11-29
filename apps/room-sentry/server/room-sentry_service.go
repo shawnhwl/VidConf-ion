@@ -2,16 +2,14 @@ package server
 
 import (
 	"database/sql"
-	"fmt"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
 	log "github.com/pion/ion-log"
+	postgresService "github.com/pion/ion/apps/postgres"
 )
 
 const (
@@ -131,7 +129,7 @@ func (s *RoomSentryService) deletePlaybackid(c *gin.Context) {
 
 func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 	timeLive := time.Now().Format(time.RFC3339)
-	postgresDB := getPostgresDB(config)
+	postgresDB := postgresService.GetPostgresDB(config.Postgres)
 
 	s := &RoomSentryService{
 		conf: config,
@@ -166,164 +164,6 @@ func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 	s.timeReady = time.Now().Format(time.RFC3339)
 
 	return s
-}
-
-func getPostgresDB(config Config) *sql.DB {
-	log.Infof("--- Connecting to PostgreSql ---")
-	addrSplit := strings.Split(config.Postgres.Addr, ":")
-	port, err := strconv.Atoi(addrSplit[1])
-	if err != nil {
-		log.Errorf("invalid port number: %s\n", addrSplit[1])
-		os.Exit(1)
-	}
-	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		addrSplit[0],
-		port,
-		config.Postgres.User,
-		config.Postgres.Password,
-		config.Postgres.Database)
-	var postgresDB *sql.DB
-	// postgresDB.Open
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		postgresDB, err = sql.Open("postgres", psqlconn)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to connect to database: %v\n", err)
-		os.Exit(1)
-	}
-	// postgresDB.Ping
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		err = postgresDB.Ping()
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to ping database: %v\n", err)
-		os.Exit(1)
-	}
-	// create RoomMgmtSchema schema
-	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "room"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."room"(
-					"id"             UUID PRIMARY KEY,
-					"name"           TEXT NOT NULL,
-					"status"         TEXT NOT NULL,
-					"httpEndpoint"	 TEXT NOT NULL,
-					"signalEndpoint" TEXT NOT NULL,
-					"startTime"      TIMESTAMPTZ NOT NULL,
-					"endTime"        TIMESTAMPTZ NOT NULL,
-					"allowedUserId"  TEXT ARRAY NOT NULL,
-					"earlyEndReason" TEXT NOT NULL,
-					"createdBy"      TEXT NOT NULL,
-					"createdAt"      TIMESTAMPTZ NOT NULL,
-					"updatedBy"      TEXT NOT NULL,
-					"updatedAt"      TIMESTAMPTZ NOT NULL)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "announcement"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."announcement"(
-					"id"                    UUID PRIMARY KEY,
-					"roomId"                UUID NOT NULL,
-					"status"                TEXT NOT NULL,
-					"message"               TEXT NOT NULL,
-					"relativeFrom"          TEXT NOT NULL,
-					"relativeTimeInSeconds" INT NOT NULL,
-					"userId"                TEXT ARRAY NOT NULL,
-					"createdAt"             TIMESTAMPTZ NOT NULL,
-					"createdBy"             TEXT NOT NULL,
-					"updatedAt"             TIMESTAMPTZ NOT NULL,
-					"updatedBy"             TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-
-	// create RoomRecordSchema schema
-	createStmt = `CREATE SCHEMA IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "room"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomRecordSchema + `"."room"(
-					"id"        UUID PRIMARY KEY,
-					"name"      TEXT NOT NULL,
-					"startTime" TIMESTAMPTZ NOT NULL,
-					"endTime"   TIMESTAMPTZ NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.Postgres.RoomMgmtSchema + `"."room"("id"))`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-	// create table "playback"
-	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.Postgres.RoomMgmtSchema + `"."playback"(
-					"id"             UUID PRIMARY KEY,
-					"roomId"         UUID NOT NULL,
-					"name"           TEXT NOT NULL,
-					"httpEndpoint"   TEXT NOT NULL,
-					"signalEndpoint" TEXT NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.Postgres.RoomRecordSchema + `"."room"("id"))`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = postgresDB.Exec(createStmt)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
-		os.Exit(1)
-	}
-
-	return postgresDB
 }
 
 func (s *RoomSentryService) start() {

@@ -180,6 +180,24 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 		log.Errorf("Unable to execute sql statement: %v\n", err)
 		os.Exit(1)
 	}
+	// create table "metadata"
+	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.RoomRecordSchema + `"."metadata"(
+		"id"        UUID PRIMARY KEY,
+		"roomId"    UUID NOT NULL,
+		"timestamp" TIMESTAMPTZ NOT NULL,
+		"data"      JSON NOT NULL,
+		CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = postgresDB.Exec(createStmt)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("Unable to execute sql statement: %v\n", err)
+		os.Exit(1)
+	}
 	// create table "peerEvent"
 	createStmt = `CREATE TABLE IF NOT EXISTS "` + config.RoomRecordSchema + `"."peerEvent"(
 					"id"        UUID PRIMARY KEY,
