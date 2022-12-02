@@ -35,12 +35,16 @@ type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
 
+type RoomMgmtConf struct {
+	SessionId          string `mapstructure:"sessionId"`
+	SystemUserIdPrefix string `mapstructure:"systemUserIdPrefix"`
+	SystemUsername     string `mapstructure:"systemUsername"`
+	PlaybackIdPrefix   string `mapstructure:"playbackIdPrefix"`
+}
+
 type RecorderConf struct {
 	Addr             string `mapstructure:"addr"`
-	RoomId           string `mapstructure:"roomid"`
 	ChoppedInSeconds int    `mapstructure:"choppedInSeconds"`
-	SystemUserId     string `mapstructure:"systemUserId"`
-	SystemUsername   string `mapstructure:"systemUsername"`
 }
 
 type Config struct {
@@ -50,6 +54,7 @@ type Config struct {
 	Postgres postgresService.PostgresConf `mapstructure:"postgres"`
 	Minio    minioService.MinioConf       `mapstructure:"minio"`
 	Signal   SignalConf                   `mapstructure:"signal"`
+	RoomMgmt RoomMgmtConf                 `mapstructure:"roommgmt"`
 	Recorder RecorderConf                 `mapstructure:"recorder"`
 }
 
@@ -100,9 +105,6 @@ type RoomRecorder struct {
 	ion.Node
 	natsConn         *nats.Conn
 	natsDiscoveryCli *natsDiscoveryClient.Client
-
-	// config
-	conf Config
 }
 
 // New create a RoomRecorder node instance
@@ -117,7 +119,7 @@ func New() *RoomRecorder {
 func (r *RoomRecorder) Start(conf Config, quitCh chan os.Signal) error {
 	var err error
 
-	log.Infof("r.conf.Nats.URL===%+v", r.conf.Nats.URL)
+	log.Infof("conf.Nats.URL===%+v", conf.Nats.URL)
 	err = r.Node.Start(conf.Nats.URL)
 	if err != nil {
 		r.Close()

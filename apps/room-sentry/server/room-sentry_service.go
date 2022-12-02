@@ -8,11 +8,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
+	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	postgresService "github.com/pion/ion/apps/postgres"
 )
 
 const (
+	UPDATEROOM_TOPIC     string = "roomUpdates."
+	CREATEPLAYBACK_TOPIC string = "playbackCreate."
+	DELETEPLAYBACK_TOPIC string = "playbackDelete."
+
 	NOT_READY         string = "service is not yet ready"
 	ANNOUNCEMENT_SENT string = "Sent"
 	ROOM_BOOKED       string = "Booked"
@@ -51,11 +56,12 @@ type AnnounceKey struct {
 }
 
 type RoomSentryService struct {
-	conf Config
+	conf     Config
+	natsConn *nats.Conn
 
-	onRoomChanges    chan string
-	onPlaybackCreate chan string
-	onPlaybackDelete chan string
+	onRoomUpdatesCh    chan string
+	onPlaybackCreateCh chan string
+	onPlaybackDeleteCh chan string
 
 	timeLive  string
 	timeReady string
@@ -64,10 +70,10 @@ type RoomSentryService struct {
 	roomMgmtSchema   string
 	roomRecordSchema string
 
-	pollInterval   time.Duration
-	systemUserId   string
-	systemUsername string
-	httpEndpoints  []string
+	systemUserIdPrefix string
+	systemUsername     string
+
+	pollInterval time.Duration
 
 	roomStarts       map[string]StartRooms
 	roomStartKeys    []string
@@ -91,52 +97,53 @@ func (s *RoomSentryService) getReadiness(c *gin.Context) {
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
 }
 
-func (s *RoomSentryService) getRoomid(c *gin.Context) {
-	roomId := c.Param("roomid")
-	log.Infof("POST rooms/%s", roomId)
+func (s *RoomSentryService) onRoomUpdates(msg *nats.Msg) {
+	roomId := msg.Subject[len(UPDATEROOM_TOPIC):]
+	log.Infof("onSubcribe %s%s", UPDATEROOM_TOPIC, roomId)
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
+		msg.Respond([]byte(NOT_READY))
 		return
 	}
 
-	s.onRoomChanges <- roomId
-	c.Status(http.StatusOK)
+	s.onRoomUpdatesCh <- roomId
+	msg.Respond([]byte(""))
 }
 
-func (s *RoomSentryService) getPlaybackid(c *gin.Context) {
-	playbackid := c.Param("playbackid")
-	log.Infof("POST playback/%s", playbackid)
+func (s *RoomSentryService) onPlaybackCreate(msg *nats.Msg) {
+	playbackid := msg.Subject[len(CREATEPLAYBACK_TOPIC):]
+	log.Infof("onSubcribe %s%s", CREATEPLAYBACK_TOPIC, playbackid)
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
+		msg.Respond([]byte(NOT_READY))
 		return
 	}
 
-	s.onPlaybackCreate <- playbackid
-	c.Status(http.StatusOK)
+	s.onPlaybackCreateCh <- playbackid
+	msg.Respond([]byte(""))
 }
 
-func (s *RoomSentryService) deletePlaybackid(c *gin.Context) {
-	playbackid := c.Param("playbackid")
-	log.Infof("POST delete/playback/%s", playbackid)
+func (s *RoomSentryService) onPlaybackDelete(msg *nats.Msg) {
+	playbackid := msg.Subject[len(DELETEPLAYBACK_TOPIC):]
+	log.Infof("onSubcribe %s%s", DELETEPLAYBACK_TOPIC, playbackid)
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
+		msg.Respond([]byte(NOT_READY))
 		return
 	}
 
-	s.onPlaybackDelete <- playbackid
-	c.Status(http.StatusOK)
+	s.onPlaybackDeleteCh <- playbackid
+	msg.Respond([]byte(""))
 }
 
-func NewRoomMgmtSentryService(config Config) *RoomSentryService {
+func NewRoomMgmtSentryService(config Config, natsConn *nats.Conn) *RoomSentryService {
 	timeLive := time.Now().Format(time.RFC3339)
 	postgresDB := postgresService.GetPostgresDB(config.Postgres)
 
 	s := &RoomSentryService{
-		conf: config,
+		conf:     config,
+		natsConn: natsConn,
 
-		onRoomChanges:    make(chan string, 2048),
-		onPlaybackCreate: make(chan string, 2048),
-		onPlaybackDelete: make(chan string, 2048),
+		onRoomUpdatesCh:    make(chan string, 2048),
+		onPlaybackCreateCh: make(chan string, 2048),
+		onPlaybackDeleteCh: make(chan string, 2048),
 
 		timeLive:  timeLive,
 		timeReady: "",
@@ -145,10 +152,10 @@ func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 		roomMgmtSchema:   config.Postgres.RoomMgmtSchema,
 		roomRecordSchema: config.Postgres.RoomRecordSchema,
 
-		pollInterval:   time.Duration(config.RoomSentry.PollInSeconds) * time.Second,
-		systemUserId:   config.RoomSentry.SystemUserId,
-		systemUsername: config.RoomSentry.SystemUsername,
-		httpEndpoints:  config.RoomSentry.HttpEndpoints,
+		systemUserIdPrefix: config.RoomMgmt.SystemUserIdPrefix,
+		systemUsername:     config.RoomMgmt.SystemUsername,
+
+		pollInterval: time.Duration(config.RoomSentry.PollInSeconds) * time.Second,
 
 		roomStarts:       make(map[string]StartRooms),
 		roomStartKeys:    make([]string, 0),
@@ -160,24 +167,43 @@ func NewRoomMgmtSentryService(config Config) *RoomSentryService {
 
 	go s.start()
 	go s.checkForServiceCall()
-	<-s.onRoomChanges
+	<-s.onRoomUpdatesCh
 	s.timeReady = time.Now().Format(time.RFC3339)
 
 	return s
 }
 
 func (s *RoomSentryService) start() {
+	log.Infof("--- Starting NATS Subscription ---")
+	onRoomUpdatesSub, err := s.natsConn.Subscribe(UPDATEROOM_TOPIC+"*", s.onRoomUpdates)
+	if err != nil {
+		log.Errorf("NATS Subscription error: %s", err)
+		os.Exit(1)
+	}
+	defer onRoomUpdatesSub.Unsubscribe()
+	onPlaybackCreateSub, err := s.natsConn.Subscribe(CREATEPLAYBACK_TOPIC+"*", s.onPlaybackCreate)
+	if err != nil {
+		log.Errorf("NATS Subscription error: %s", err)
+		os.Exit(1)
+	}
+	defer onPlaybackCreateSub.Unsubscribe()
+	onPlaybackDeleteSub, err := s.natsConn.Subscribe(DELETEPLAYBACK_TOPIC+"*", s.onPlaybackDelete)
+	if err != nil {
+		log.Errorf("NATS Subscription error: %s", err)
+		os.Exit(1)
+	}
+	defer onPlaybackDeleteSub.Unsubscribe()
+
 	log.Infof("--- Starting HTTP-API Server ---")
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.GET("/liveness", s.getLiveness)
 	router.GET("/readiness", s.getReadiness)
-	router.POST("/rooms/:roomid", s.getRoomid)
-	router.POST("/playback/:playbackid", s.getPlaybackid)
-	router.POST("/delete/playback/:playbackid", s.deletePlaybackid)
-
 	log.Infof("HTTP service starting at %s", s.conf.RoomSentry.Addr)
-	log.Errorf("%s", router.Run(s.conf.RoomSentry.Addr))
-	os.Exit(1)
+	err = router.Run(s.conf.RoomSentry.Addr)
+	if err != nil {
+		log.Errorf("http listener error: %s", err)
+		os.Exit(1)
+	}
 }

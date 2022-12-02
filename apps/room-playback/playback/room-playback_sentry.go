@@ -1,8 +1,8 @@
 package playback
 
 import (
-	"fmt"
-	"net/http"
+	"errors"
+	"strings"
 	"time"
 
 	log "github.com/pion/ion-log"
@@ -76,8 +76,8 @@ func (s *RoomPlaybackService) batchSendChat() {
 func (s *RoomPlaybackService) sendChat(chatPayload ChatPayload) {
 	var err error
 	for retry := 0; retry < RETRY_COUNT; retry++ {
-		err := s.roomService.SendMessage(s.playbackId,
-			s.systemUserId,
+		err := s.roomService.SendMessage(s.sessionId,
+			s.systemUserIdPrefix,
 			"all",
 			map[string]interface{}{"msg": chatPayload})
 		if err == nil {
@@ -86,7 +86,7 @@ func (s *RoomPlaybackService) sendChat(chatPayload ChatPayload) {
 		time.Sleep(time.Second)
 	}
 	if err != nil {
-		log.Errorf("Error playback chat to playbackId '%s' : %v", s.playbackId, err)
+		log.Errorf("Error playback chat to playbackId '%s' : %v", s.sessionId, err)
 		return
 	}
 }
@@ -140,13 +140,11 @@ func (s *RoomPlaybackService) checkForEmptyRoom() {
 	for {
 		time.Sleep(ROOMEMPTY_INTERVAL)
 		if s.roomService != nil {
-			peers := s.roomService.GetPeers(s.playbackId)
+			peers := s.roomService.GetPeers(s.sessionId)
 			peerCount := 0
 			for _, peer := range peers {
-				if len(peer.Uid) >= s.lenSystemUserId {
-					if peer.Uid[:s.lenSystemUserId] == s.systemUserId {
-						continue
-					}
+				if strings.HasPrefix(peer.Uid, s.systemUserIdPrefix) {
+					continue
 				}
 				if len(peer.Uid) >= LEN_PLAYBACK_PREFIX {
 					if peer.Uid[:LEN_PLAYBACK_PREFIX] == PLAYBACK_PREFIX {
@@ -156,43 +154,26 @@ func (s *RoomPlaybackService) checkForEmptyRoom() {
 				peerCount++
 			}
 			if peerCount == 0 {
-				log.Warnf("Deleting playbackId '%s' since no viewers left", s.playbackId)
-				requestURL := s.conf.RoomSentry.Url + "/delete/playback/" + s.playbackId
-				s.httpPost(requestURL)
-				return
+				log.Warnf("Deleting playbackId '%s' since no viewers left", s.sessionId)
+				err := s.natsPublish(DELETEPLAYBACK_TOPIC+s.sessionId, nil)
+				if err == nil {
+					return
+				}
 			}
 		}
 	}
 }
 
-func (s *RoomPlaybackService) httpPost(requestURL string) error {
-	request, err := http.NewRequest(http.MethodPost, requestURL, nil)
+func (s *RoomPlaybackService) natsPublish(topic string, data []byte) error {
+	log.Infof("publishing to topic '%s'", topic)
+	resp, err := s.natsConn.Request(topic, data, RETRY_DELAY)
 	if err != nil {
-		log.Errorf("error sending http.POST: %v", err)
+		log.Errorf("error publishing topic '%': %v", topic, err)
 		return err
 	}
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		err = s.httpClient(request)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("error sending http.POST: %v", err)
-		return err
-	}
-	return nil
-}
-
-func (s *RoomPlaybackService) httpClient(request *http.Request) error {
-	var response *http.Response
-	client := &http.Client{}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	} else if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("response.StatusCode=%v", response.StatusCode)
+	if string(resp.Data) != "" {
+		log.Errorf("error publishing topic '%': %v", topic, string(resp.Data))
+		return errors.New(string(resp.Data))
 	}
 	return nil
 }
@@ -229,7 +210,7 @@ func (s *RoomPlaybackService) openRoom() {
 			break
 		}
 	}
-	s.getRoomByPlaybackId(s.playbackId)
+	s.getRoomByPlaybackId(s.sessionId)
 	s.joinRoom()
 }
 
@@ -246,8 +227,8 @@ func (s *RoomPlaybackService) joinRoom() {
 
 	err = s.roomService.Join(
 		sdk.JoinInfo{
-			Sid: s.playbackId,
-			Uid: s.systemUserId + sdk.RandomKey(16),
+			Sid: s.sessionId,
+			Uid: s.systemUserIdPrefix + sdk.RandomKey(16),
 		},
 	)
 	if err != nil {
@@ -255,7 +236,7 @@ func (s *RoomPlaybackService) joinRoom() {
 		return
 	}
 
-	log.Infof("room.Join ok roomid=%v", s.playbackId)
+	log.Infof("room.Join ok roomid=%v", s.sessionId)
 }
 
 func (s *RoomPlaybackService) onRoomJoin(success bool, info sdk.RoomInfo, err error) {

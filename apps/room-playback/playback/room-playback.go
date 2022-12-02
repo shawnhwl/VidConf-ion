@@ -34,27 +34,27 @@ type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
 
-type RoomSentryConf struct {
-	Url string `mapstructure:"url"`
+type RoomMgmtConf struct {
+	SessionId          string `mapstructure:"sessionId"`
+	SystemUserIdPrefix string `mapstructure:"systemUserIdPrefix"`
+	SystemUsername     string `mapstructure:"systemUsername"`
+	PlaybackIdPrefix   string `mapstructure:"playbackIdPrefix"`
 }
 
 type PlaybackConf struct {
 	Addr              string `mapstructure:"addr"`
-	PlaybackId        string `mapstructure:"playbackId"`
 	CheckForEmptyRoom bool   `mapstructure:"checkForEmptyRoom"`
-	SystemUserId      string `mapstructure:"systemUserId"`
-	SystemUsername    string `mapstructure:"systemUsername"`
 }
 
 type Config struct {
-	Global     GlobalConf                   `mapstructure:"global"`
-	Log        LogConf                      `mapstructure:"log"`
-	Nats       NatsConf                     `mapstructure:"nats"`
-	Postgres   postgresService.PostgresConf `mapstructure:"postgres"`
-	Minio      minioService.MinioConf       `mapstructure:"minio"`
-	Signal     SignalConf                   `mapstructure:"signal"`
-	RoomSentry RoomSentryConf               `mapstructure:"roomsentry"`
-	Playback   PlaybackConf                 `mapstructure:"playback"`
+	Global   GlobalConf                   `mapstructure:"global"`
+	Log      LogConf                      `mapstructure:"log"`
+	Nats     NatsConf                     `mapstructure:"nats"`
+	Postgres postgresService.PostgresConf `mapstructure:"postgres"`
+	Minio    minioService.MinioConf       `mapstructure:"minio"`
+	Signal   SignalConf                   `mapstructure:"signal"`
+	RoomMgmt RoomMgmtConf                 `mapstructure:"roommgmt"`
+	Playback PlaybackConf                 `mapstructure:"playback"`
 }
 
 func unmarshal(rawVal interface{}) error {
@@ -104,9 +104,6 @@ type RoomPlayback struct {
 	ion.Node
 	natsConn         *nats.Conn
 	natsDiscoveryCli *natsDiscoveryClient.Client
-
-	// config
-	conf Config
 }
 
 // New create a RoomPlayback node instance
@@ -121,7 +118,7 @@ func New() *RoomPlayback {
 func (r *RoomPlayback) Start(conf Config, quitCh chan os.Signal) error {
 	var err error
 
-	log.Infof("r.conf.Nats.URL===%+v", r.conf.Nats.URL)
+	log.Infof("conf.Nats.URL===%+v", conf.Nats.URL)
 	err = r.Node.Start(conf.Nats.URL)
 	if err != nil {
 		r.Close()
@@ -137,7 +134,7 @@ func (r *RoomPlayback) Start(conf Config, quitCh chan os.Signal) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.Node.NatsConn()
-	r.RoomPlaybackService = *NewRoomPlaybackService(conf, quitCh)
+	r.RoomPlaybackService = *NewRoomPlaybackService(conf, r.natsConn, quitCh)
 
 	// Register reflection service on nats-rpc server.
 	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))

@@ -83,8 +83,6 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"id"             UUID PRIMARY KEY,
 					"name"           TEXT NOT NULL,
 					"status"         TEXT NOT NULL,
-					"httpEndpoint"	 TEXT NOT NULL,
-					"signalEndpoint" TEXT NOT NULL,
 					"startTime"      TIMESTAMPTZ NOT NULL,
 					"endTime"        TIMESTAMPTZ NOT NULL,
 					"allowedUserId"  TEXT ARRAY NOT NULL,
@@ -148,8 +146,7 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"id"        UUID PRIMARY KEY,
 					"name"      TEXT NOT NULL,
 					"startTime" TIMESTAMPTZ NOT NULL,
-					"endTime"   TIMESTAMPTZ NOT NULL,
-					CONSTRAINT fk_room FOREIGN KEY("id") REFERENCES "` + config.RoomMgmtSchema + `"."room"("id"))`
+					"endTime"   TIMESTAMPTZ NOT NULL)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
@@ -166,8 +163,6 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"id"             UUID PRIMARY KEY,
 					"roomId"         UUID NOT NULL,
 					"name"           TEXT NOT NULL,
-					"httpEndpoint"   TEXT NOT NULL,
-					"signalEndpoint" TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id"))`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)

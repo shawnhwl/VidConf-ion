@@ -44,9 +44,9 @@ type natsConf struct {
 }
 
 type RoomMgmtConf struct {
-	ReservedUsernames []string `mapstructure:"reserved_usernames"`
-	SystemUserId      string   `mapstructure:"systemUserId"`
-	PlaybackIdPrefix  string   `mapstructure:"playbackIdPrefix"`
+	ReservedUsernames  []string `mapstructure:"reserved_usernames"`
+	SystemUserIdPrefix string   `mapstructure:"systemUserIdPrefix"`
+	PlaybackIdPrefix   string   `mapstructure:"playbackIdPrefix"`
 }
 
 // Config for room node
@@ -113,8 +113,7 @@ type Room struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	systemUserId    string
-	lenSystemUserId int
+	systemUserIdPrefix string
 }
 
 type RoomServer struct {
@@ -267,8 +266,7 @@ func newRoom(sid, systemUid string,
 		minioClient: minioClient,
 		bucketName:  bucketName,
 
-		systemUserId:    systemUid,
-		lenSystemUserId: len(systemUid),
+		systemUserIdPrefix: systemUid,
 	}
 	return r
 }
@@ -378,10 +376,8 @@ func (r *Room) broadcastRoomEvent(uid string, event *room.Reply) {
 }
 
 func (r *Room) broadcastPeerEvent(event *room.PeerEvent) {
-	if len(event.Peer.Uid) >= r.lenSystemUserId {
-		if event.Peer.Uid[:r.lenSystemUserId] == r.systemUserId {
-			return
-		}
+	if strings.HasPrefix(event.Peer.Uid, r.systemUserIdPrefix) {
+		return
 	}
 
 	go r.insertPeerEvent(
@@ -413,7 +409,7 @@ func (r *Room) sendMessage(msg *room.Message) {
 	data := msg.Payload
 	log.Debugf("Room.onMessage %v => %v, type: %v, data: %v", from, to, dtype, data)
 
-	isParticipant := from == r.systemUserId
+	isParticipant := strings.HasPrefix(from, r.systemUserIdPrefix)
 	peers := r.getPeers()
 	for _, p := range peers {
 		if isParticipant {
@@ -444,10 +440,8 @@ func (r *Room) sendMessage(msg *room.Message) {
 
 	for _, p := range peers {
 		isRecipient := to == p.info.Uid
-		if len(p.info.Uid) >= r.lenSystemUserId {
-			if p.info.Uid[:r.lenSystemUserId] == r.systemUserId {
-				isRecipient = true
-			}
+		if strings.HasPrefix(p.info.Uid, r.systemUserIdPrefix) {
+			isRecipient = true
 		}
 		if isRecipient {
 			if err := p.sendMessage(msg); err != nil {

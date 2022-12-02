@@ -30,7 +30,7 @@ type RoomBooking struct {
 
 func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (string, error) {
 	var booking RoomBooking
-	if roomId[:len(s.rs.playbackIdPrefix)] == s.rs.playbackIdPrefix {
+	if strings.HasPrefix(roomId, s.rs.playbackIdPrefix) {
 		queryStmt := `SELECT "name" FROM "` + s.rs.roomMgmtSchema + `"."playback" WHERE "id"=$1`
 		var row *sql.Row
 		for retry := 0; retry < RETRY_COUNT; retry++ {
@@ -92,10 +92,8 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 	}
 
 	isAllowed := false
-	if len(uId) >= s.rs.lenSystemUserId {
-		if uId[:s.rs.lenSystemUserId] == s.rs.systemUserId {
-			isAllowed = true
-		}
+	if strings.HasPrefix(uId, s.rs.systemUserIdPrefix) {
+		isAllowed = true
 	}
 	if !isAllowed {
 		if len(booking.allowedUserId) == 0 {

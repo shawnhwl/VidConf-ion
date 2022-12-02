@@ -117,13 +117,13 @@ func (s *RoomRecorderService) onRoomJoin(success bool, info sdk.RoomInfo, err er
 	s.roomRTC.OnDataChannel = s.onRTCDataChannel
 	s.roomRTC.OnSpeaker = s.onRTCSpeaker
 
-	err = s.roomRTC.Join(s.roomId, s.systemUid)
+	err = s.roomRTC.Join(s.sessionId, s.systemUserId)
 	if err != nil {
 		s.joinRoomCh <- struct{}{}
 		return
 	}
 	s.timeReady = time.Now().Format(time.RFC3339)
-	log.Infof("rtc.Join ok roomid=%v", s.roomId)
+	log.Infof("rtc.Join ok roomid=%v", s.sessionId)
 }
 
 func (s *RoomRecorderService) onRoomPeerEvent(state sdk.PeerState, peer sdk.PeerInfo) {
@@ -219,8 +219,8 @@ func (s *RoomRecorderService) joinRoom() {
 	// join room
 	err = s.roomService.Join(
 		sdk.JoinInfo{
-			Sid: s.roomId,
-			Uid: s.systemUid + sdk.RandomKey(16),
+			Sid: s.sessionId,
+			Uid: s.systemUserId,
 		},
 	)
 	if err != nil {
@@ -228,7 +228,7 @@ func (s *RoomRecorderService) joinRoom() {
 		return
 	}
 
-	log.Infof("room.Join ok roomid=%v", s.roomId)
+	log.Infof("room.Join ok roomid=%v", s.sessionId)
 }
 
 func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
@@ -245,7 +245,7 @@ func (s *RoomRecorderService) insertTrackEvent(trackEvent TrackEvent) {
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			trackEventId,
-			s.roomId,
+			s.sessionId,
 			trackEvent.peerId,
 			trackEvent.trackRemoteIds)
 		if err == nil {
@@ -335,7 +335,7 @@ func (s *RoomRecorderService) insertTrack(track Track) string {
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			dbId,
-			s.roomId,
+			s.sessionId,
 			track.trackRemoteId,
 			track.mimeType)
 		if err == nil {
@@ -376,7 +376,7 @@ func (s *RoomRecorderService) insertTracks(
 		_, err = s.postgresDB.Exec(insertStmt,
 			objName,
 			dbId,
-			s.roomId,
+			s.sessionId,
 			filePath)
 		if err == nil {
 			break
@@ -401,7 +401,7 @@ func (s *RoomRecorderService) insertTracks(
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		uploadInfo, err = s.minioClient.PutObject(context.Background(),
 			s.bucketName,
-			s.roomId+filePath,
+			s.sessionId+filePath,
 			&data,
 			int64(data.Len()),
 			minio.PutObjectOptions{ContentType: "application/octet-stream"})

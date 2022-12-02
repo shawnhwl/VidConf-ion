@@ -21,14 +21,14 @@ roomRecordSchema = "room-recorder"
 # The addr for grpc signalling
 addr = "vidconf:5551"
 
+[roommgmt]
+# systemUserIdPrefix and systemUsername used by system to join the room sessions
+# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
+systemUserIdPrefix = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
+systemUsername = "Public Announcements"
+
 [roomsentry]
 # Polling interval for StartTime, EndTime and AnnounceTime
 pollInSeconds = 1
 # The address the HTTP server will listen on.
 address = "0.0.0.0:7073"
-# UserId and UserName used by system to join the room sessions
-# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
-systemUserId = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
-systemUsername = "Public Announcements"
-# endpoint pool for spinning of room-recorder and playback
-httpEndpoints = ["http://vidconf:7083"]

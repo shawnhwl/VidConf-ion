@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 
 	log "github.com/pion/ion-log"
 	room "github.com/pion/ion/apps/room/proto"
@@ -247,10 +248,8 @@ func (s *RoomSignalService) Join(in *room.Request_Join, stream room.RoomSignal_S
 		key = util.GetRedisPeerKey(sid, uid)
 		res = s.rs.redis.HGetAll(key)
 		if len(res) != 0 {
-			if len(res["uid"]) >= r.lenSystemUserId {
-				if res["uid"][:r.lenSystemUserId] == r.systemUserId {
-					continue
-				}
+			if strings.HasPrefix(res["uid"], r.systemUserIdPrefix) {
+				continue
 			}
 
 			info := &room.Peer{

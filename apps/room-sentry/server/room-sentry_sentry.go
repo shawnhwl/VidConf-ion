@@ -72,14 +72,14 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 	}
 	payload := map[string]interface{}{
 		"msg": map[string]interface{}{
-			"uid":       s.systemUserId,
+			"uid":       s.systemUserIdPrefix,
 			"name":      s.systemUsername,
 			"text":      message,
 			"timestamp": time.Now().Format(time.RFC3339),
 		},
 	}
 	if len(toId) == 0 {
-		err := roomService.SendMessage(roomId, s.systemUserId, "all", payload)
+		err := roomService.SendMessage(roomId, s.systemUserIdPrefix, "all", payload)
 		if err != nil {
 			output := fmt.Sprintf("Error sending message '%s' to all users in roomId '%s' : %v", message, roomId, err)
 			log.Errorf(output)
@@ -100,13 +100,13 @@ func (s *RoomSentryService) postMessage(roomId, message string, toId []string) e
 				err = errors.New(output)
 				continue
 			}
-			err1 := roomService.SendMessage(roomId, s.systemUserId, userId, payload)
+			err1 := roomService.SendMessage(roomId, s.systemUserIdPrefix, userId, payload)
 			if err1 != nil {
 				err = err1
 			}
 			payload = map[string]interface{}{
 				"msg": map[string]interface{}{
-					"uid":              s.systemUserId,
+					"uid":              s.systemUserIdPrefix,
 					"name":             s.systemUsername,
 					"text":             message,
 					"timestamp":        time.Now().Format(time.RFC3339),
@@ -192,16 +192,16 @@ func (s *RoomSentryService) closeRoomService(sdkConnector *sdk.Connector, roomSe
 func (s *RoomSentryService) checkForServiceCall() {
 	s.initTimings()
 	s.sortTimes()
-	s.onRoomChanges <- "ok"
+	s.onRoomUpdatesCh <- "ok"
 
 	log.Infof("RoomMgmtSentryService Started, Poll interval:%v", s.pollInterval)
 	for {
 		select {
-		case playbackId := <-s.onPlaybackCreate:
+		case playbackId := <-s.onPlaybackCreateCh:
 			go s.createPlayback(playbackId)
-		case playbackId := <-s.onPlaybackDelete:
+		case playbackId := <-s.onPlaybackDeleteCh:
 			go s.deletePlayback(playbackId)
-		case roomId := <-s.onRoomChanges:
+		case roomId := <-s.onRoomUpdatesCh:
 			go s.roomChanges(roomId)
 		default:
 			s.startRooms()
@@ -235,21 +235,6 @@ func (s *RoomSentryService) createPlayback(playbackId string) {
 		} else {
 			log.Errorf("could not query database: %s", err)
 		}
-		return
-	}
-	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."playback"
-					SET "httpEndpoint"=$1 WHERE "id"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = s.postgresDB.Exec(updateStmt,
-			s.httpEndpoints[0],
-			playbackId)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("could not update database: %s", err)
 		return
 	}
 	go s.createRoom(playbackId, name)
@@ -443,25 +428,12 @@ func (s *RoomSentryService) sortTimes() {
 func (s *RoomSentryService) startRoomStatus(roomId, name string, startTime time.Time) {
 	log.Infof("startRoomStatus: %s", roomId)
 	var err error
-	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room" SET "status"=$1 WHERE "id"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = s.postgresDB.Exec(updateStmt,
-			ROOM_STARTED,
-			roomId)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("could not update database: %s", err)
-	}
 	insertStmt := `INSERT INTO "` + s.roomRecordSchema + `"."room"(
-					"id",
-					"name",
-					"startTime",
-					"endTime")
-					VALUES($1, $2, $3, $4)`
+		"id",
+		"name",
+		"startTime",
+		"endTime")
+		VALUES($1, $2, $3, $4)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			roomId,
@@ -475,6 +447,21 @@ func (s *RoomSentryService) startRoomStatus(roomId, name string, startTime time.
 	}
 	if err != nil {
 		log.Errorf("could not insert into database: %s", err)
+		return
+	}
+	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room" SET "status"=$1 WHERE "id"=$2`
+	for retry := 0; retry < RETRY_COUNT; retry++ {
+		_, err = s.postgresDB.Exec(updateStmt,
+			ROOM_STARTED,
+			roomId)
+		if err == nil {
+			break
+		}
+		time.Sleep(RETRY_DELAY)
+	}
+	if err != nil {
+		log.Errorf("could not update database: %s", err)
+		return
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,13 +58,18 @@ type RoomRecorderService struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	roomId         string
-	chopInterval   time.Duration
-	systemUid      string
+	sessionId      string
+	systemUserId   string
 	systemUsername string
+
+	chopInterval time.Duration
 }
 
 func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderService {
+	if strings.HasPrefix(config.RoomMgmt.SessionId, config.RoomMgmt.PlaybackIdPrefix) {
+		log.Infof("is not a recording session, exiting")
+		os.Exit(0)
+	}
 	timeLive := time.Now().Format(time.RFC3339)
 	minioClient := minioService.GetMinioClient(config.Minio)
 	postgresDB := postgresService.GetPostgresDB(config.Postgres)
@@ -89,30 +95,18 @@ func NewRoomRecorderService(config Config, quitCh chan os.Signal) *RoomRecorderS
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		roomId:         config.Recorder.RoomId,
-		chopInterval:   time.Duration(config.Recorder.ChoppedInSeconds) * time.Second,
-		systemUid:      config.Recorder.SystemUserId,
-		systemUsername: config.Recorder.SystemUsername,
+		sessionId:      config.RoomMgmt.SessionId,
+		systemUserId:   config.RoomMgmt.SystemUserIdPrefix + sdk.RandomKey(16),
+		systemUsername: config.RoomMgmt.SystemUsername,
+
+		chopInterval: time.Duration(config.Recorder.ChoppedInSeconds) * time.Second,
 	}
 	go s.start()
-	s.getRoomInfo()
+	s.getRoomsByRoomid()
 	go s.checkForRoomError()
 	s.joinRoomCh <- struct{}{}
 
 	return s
-}
-
-func (s *RoomRecorderService) getRoomInfo() {
-	var room Room
-	for {
-		room = s.getRoomsByRoomid(s.roomId)
-		if room.status == ROOM_BOOKED {
-			log.Warnf("Room is not started yet, check again in a minute")
-			time.Sleep(time.Minute)
-			continue
-		}
-		break
-	}
 }
 
 func (s *RoomRecorderService) start() {

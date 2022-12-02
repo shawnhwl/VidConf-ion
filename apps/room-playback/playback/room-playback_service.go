@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	minio "github.com/minio/minio-go/v7"
+	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
 	minioService "github.com/pion/ion/apps/minio"
@@ -25,6 +27,10 @@ import (
 )
 
 const (
+	DELETEPLAYBACK_TOPIC string = "playbackDelete."
+	PAUSEPLAYBACK_TOPIC  string = "playbackPause."
+	PLAYBACK_TOPIC       string = "playback."
+
 	NOT_READY string = "service is not yet ready"
 
 	RETRY_COUNT  int           = 3
@@ -59,46 +65,62 @@ func (s *RoomPlaybackService) getReadiness(c *gin.Context) {
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
 }
 
-func (s *RoomPlaybackService) postPlay(c *gin.Context) {
-	speed := c.Param("speed")
-	playfrom := c.Param("playfrom")
-	chat := c.Param("chat")
-	video := c.Param("video")
-	audio := c.Param("audio")
-	log.Infof("POST /%s/%s/%s/%s/%s", speed, playfrom, chat, video, audio)
+func (s *RoomPlaybackService) onPlaybackPause(msg *nats.Msg) {
+	log.Infof("onSubcribe %s", msg.Subject)
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
+		msg.Respond([]byte(NOT_READY))
+		return
+	}
+
+	s.ctrlCh <- Ctrl{
+		isPause: true,
+	}
+	msg.Respond([]byte(""))
+}
+
+// err = s.natsPublish(PLAYBACK_TOPIC+playbackId, []byte(speed+"/"+playfrom+"/"+chat+"/"+video+"/"+audio))
+
+func (s *RoomPlaybackService) onPlayback(msg *nats.Msg) {
+	data := strings.Split(string(msg.Data), "/")
+	speed := data[0]
+	playfrom := data[1]
+	chat := data[2]
+	video := data[3]
+	audio := data[4]
+	log.Infof("onSubcribe %s %s/%s/%s/%s/%s", msg.Subject, speed, playfrom, chat, video, audio)
+	if s.timeReady == "" {
+		msg.Respond([]byte(NOT_READY))
 		return
 	}
 
 	speedf, err := strconv.ParseFloat(speed, 64)
 	if err != nil {
 		errorsttring := fmt.Sprintf("non-float speedParam '%s'", speed)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
+		msg.Respond([]byte(errorsttring))
 		return
 	}
 	playfromd, err := strconv.Atoi(playfrom)
 	if err != nil {
 		errorsttring := fmt.Sprintf("non-integer playfromParam '%s'", playfrom)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
+		msg.Respond([]byte(errorsttring))
 		return
 	}
 	chatb, err := strconv.ParseBool(chat)
 	if err != nil {
 		errorsttring := fmt.Sprintf("non-boolean chatParam '%s'", chat)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
+		msg.Respond([]byte(errorsttring))
 		return
 	}
 	videob, err := strconv.ParseBool(video)
 	if err != nil {
 		errorsttring := fmt.Sprintf("non-boolean videoParam '%s'", video)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
+		msg.Respond([]byte(errorsttring))
 		return
 	}
 	audiob, err := strconv.ParseBool(audio)
 	if err != nil {
 		errorsttring := fmt.Sprintf("non-boolean audioParam '%s'", audio)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorsttring})
+		msg.Respond([]byte(errorsttring))
 		return
 	}
 
@@ -110,20 +132,7 @@ func (s *RoomPlaybackService) postPlay(c *gin.Context) {
 		isVideo:  videob,
 		isAudio:  audiob,
 	}
-	c.Status(http.StatusOK)
-}
-
-func (s *RoomPlaybackService) postPause(c *gin.Context) {
-	log.Infof("POST /pause")
-	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
-		return
-	}
-
-	s.ctrlCh <- Ctrl{
-		isPause: true,
-	}
-	c.Status(http.StatusOK)
+	msg.Respond([]byte(""))
 }
 
 type Ctrl struct {
@@ -139,8 +148,9 @@ type Ctrl struct {
 
 // RoomPlaybackService represents a room-playback instance
 type RoomPlaybackService struct {
-	conf   Config
-	quitCh chan os.Signal
+	conf     Config
+	natsConn *nats.Conn
+	quitCh   chan os.Signal
 
 	joinRoomCh     chan struct{}
 	isSdkConnected bool
@@ -159,12 +169,12 @@ type RoomPlaybackService struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	playbackId      string
-	systemUserId    string
-	lenSystemUserId int
-	systemUsername  string
-	roomId          string
-	roomStartTime   time.Time
+	sessionId          string
+	systemUserIdPrefix string
+	systemUsername     string
+
+	roomId        string
+	roomStartTime time.Time
 
 	chatPayloads    ChatPayloads
 	lenChatPayloads int
@@ -182,14 +192,19 @@ type RoomPlaybackService struct {
 	actualRefTime   time.Time
 }
 
-func NewRoomPlaybackService(config Config, quitCh chan os.Signal) *RoomPlaybackService {
+func NewRoomPlaybackService(config Config, natsConn *nats.Conn, quitCh chan os.Signal) *RoomPlaybackService {
+	if !strings.HasPrefix(config.RoomMgmt.SessionId, config.RoomMgmt.PlaybackIdPrefix) {
+		log.Infof("is not a playback session, exiting")
+		os.Exit(0)
+	}
 	timeLive := time.Now().Format(time.RFC3339)
 	minioClient := minioService.GetMinioClient(config.Minio)
 	postgresDB := postgresService.GetPostgresDB(config.Postgres)
 
 	s := &RoomPlaybackService{
-		conf:   config,
-		quitCh: quitCh,
+		conf:     config,
+		natsConn: natsConn,
+		quitCh:   quitCh,
 
 		joinRoomCh:     make(chan struct{}, 32),
 		isSdkConnected: true,
@@ -208,10 +223,9 @@ func NewRoomPlaybackService(config Config, quitCh chan os.Signal) *RoomPlaybackS
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		playbackId:      config.Playback.PlaybackId,
-		systemUserId:    config.Playback.SystemUserId,
-		lenSystemUserId: len(config.Playback.SystemUserId),
-		systemUsername:  config.Playback.SystemUsername,
+		sessionId:          config.RoomMgmt.SessionId,
+		systemUserIdPrefix: config.RoomMgmt.SystemUserIdPrefix,
+		systemUsername:     config.RoomMgmt.SystemUsername,
 
 		chatPayloads: make(ChatPayloads, 0),
 		chatId:       0,
@@ -252,23 +266,38 @@ func getRoomService(config Config) (*sdk.Connector, *sdk.Room, *sdk.RTC, error) 
 }
 
 func (s *RoomPlaybackService) start() {
+	log.Infof("--- Starting NATS Subscription ---")
+	onPlaybackPauseSub, err := s.natsConn.Subscribe(PAUSEPLAYBACK_TOPIC+s.sessionId, s.onPlaybackPause)
+	if err != nil {
+		log.Errorf("NATS Subscription error: %s", err)
+		os.Exit(1)
+	}
+	defer onPlaybackPauseSub.Unsubscribe()
+	onPlaybackSub, err := s.natsConn.Subscribe(PLAYBACK_TOPIC+s.sessionId, s.onPlayback)
+	if err != nil {
+		log.Errorf("NATS Subscription error: %s", err)
+		os.Exit(1)
+	}
+	defer onPlaybackSub.Unsubscribe()
+
 	log.Infof("--- Starting monitoring-API Server ---")
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.GET("/liveness", s.getLiveness)
 	router.GET("/readiness", s.getReadiness)
-	router.POST("/:speed/:playfrom/:chat/:video/:audio", s.postPlay)
-	router.POST("/pause", s.postPause)
 
 	log.Infof("HTTP service starting at %s", s.conf.Playback.Addr)
-	log.Errorf("%s", router.Run(s.conf.Playback.Addr))
-	os.Exit(1)
+	err = router.Run(s.conf.Playback.Addr)
+	if err != nil {
+		log.Errorf("http listener error: %s", err)
+		os.Exit(1)
+	}
 }
 
 func (s *RoomPlaybackService) preparePlayback() {
 	log.Infof("preparePlayback started")
-	err := s.getRoomByPlaybackId(s.playbackId)
+	err := s.getRoomByPlaybackId(s.sessionId)
 	if err != nil {
 		os.Exit(1)
 	}

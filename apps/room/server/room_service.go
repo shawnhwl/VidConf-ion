@@ -37,10 +37,9 @@ type RoomService struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	reservedUsernames []string
-	systemUserId      string
-	lenSystemUserId   int
-	playbackIdPrefix  string
+	reservedUsernames  []string
+	systemUserIdPrefix string
+	playbackIdPrefix   string
 }
 
 func NewRoomService(conf Config) *RoomService {
@@ -65,10 +64,9 @@ func NewRoomService(conf Config) *RoomService {
 		minioClient: minioClient,
 		bucketName:  conf.Minio.BucketName,
 
-		reservedUsernames: reservedUsernames,
-		systemUserId:      conf.RoomMgmt.SystemUserId,
-		lenSystemUserId:   len(conf.RoomMgmt.SystemUserId),
-		playbackIdPrefix:  conf.RoomMgmt.PlaybackIdPrefix,
+		reservedUsernames:  reservedUsernames,
+		systemUserIdPrefix: conf.RoomMgmt.SystemUserIdPrefix,
+		playbackIdPrefix:   conf.RoomMgmt.PlaybackIdPrefix,
 	}
 	go s.stat()
 	return s
@@ -524,9 +522,9 @@ func (s *RoomService) createRoom(sid string) *Room {
 		return r
 	}
 	var r *Room
-	if sid[:len(s.playbackIdPrefix)] == s.playbackIdPrefix {
+	if strings.HasPrefix(sid, s.playbackIdPrefix) {
 		r = newRoom(sid,
-			s.systemUserId,
+			s.systemUserIdPrefix,
 			s.redis,
 			nil,
 			"",
@@ -534,7 +532,7 @@ func (s *RoomService) createRoom(sid string) *Room {
 			"")
 	} else {
 		r = newRoom(sid,
-			s.systemUserId,
+			s.systemUserIdPrefix,
 			s.redis,
 			s.postgresDB,
 			s.roomRecordSchema,

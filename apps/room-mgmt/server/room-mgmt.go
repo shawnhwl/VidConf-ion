@@ -35,26 +35,21 @@ type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
 
-type RoomSentryConf struct {
-	Url string `mapstructure:"url"`
-}
-
 type RoomMgmtConf struct {
-	Addr             string `mapstructure:"address"`
-	SystemUserId     string `mapstructure:"systemUserId"`
-	PlaybackIdPrefix string `mapstructure:"playbackIdPrefix"`
+	Addr               string `mapstructure:"address"`
+	SystemUserIdPrefix string `mapstructure:"systemUserIdPrefix"`
+	PlaybackIdPrefix   string `mapstructure:"playbackIdPrefix"`
 }
 
 type Config struct {
-	Global     GlobalConf                   `mapstructure:"global"`
-	Log        LogConf                      `mapstructure:"log"`
-	Nats       NatsConf                     `mapstructure:"nats"`
-	Redis      db.Config                    `mapstructure:"redis"`
-	Postgres   postgresService.PostgresConf `mapstructure:"postgres"`
-	Minio      minioService.MinioConf       `mapstructure:"minio"`
-	Signal     SignalConf                   `mapstructure:"signal"`
-	RoomSentry RoomSentryConf               `mapstructure:"roomsentry"`
-	RoomMgmt   RoomMgmtConf                 `mapstructure:"roommgmt"`
+	Global   GlobalConf                   `mapstructure:"global"`
+	Log      LogConf                      `mapstructure:"log"`
+	Nats     NatsConf                     `mapstructure:"nats"`
+	Redis    db.Config                    `mapstructure:"redis"`
+	Postgres postgresService.PostgresConf `mapstructure:"postgres"`
+	Minio    minioService.MinioConf       `mapstructure:"minio"`
+	Signal   SignalConf                   `mapstructure:"signal"`
+	RoomMgmt RoomMgmtConf                 `mapstructure:"roommgmt"`
 }
 
 func unmarshal(rawVal interface{}) error {
@@ -137,7 +132,7 @@ func (r *RoomMgmt) Start(conf Config) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.Node.NatsConn()
-	r.RoomMgmtService = *NewRoomMgmtService(conf)
+	r.RoomMgmtService = *NewRoomMgmtService(conf, r.natsConn)
 
 	// Register reflection service on nats-rpc server.
 	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))

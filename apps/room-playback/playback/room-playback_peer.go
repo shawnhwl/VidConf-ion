@@ -51,7 +51,7 @@ type PlaybackPeer struct {
 	bucketName  string
 
 	roomId         string
-	playbackId     string
+	sessionId      string
 	peerId         string
 	peerName       string
 	orphanRemoteId string
@@ -86,7 +86,7 @@ func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName, orphanRemoteId s
 		bucketName:  s.bucketName,
 
 		roomId:         s.roomId,
-		playbackId:     s.playbackId,
+		sessionId:      s.sessionId,
 		peerId:         peerId,
 		peerName:       peerName,
 		orphanRemoteId: orphanRemoteId,
@@ -556,7 +556,7 @@ func (p *PlaybackPeer) joinRoom() {
 	// join room
 	err = p.roomService.Join(
 		sdk.JoinInfo{
-			Sid:         p.playbackId,
+			Sid:         p.sessionId,
 			Uid:         PLAYBACK_PREFIX + p.peerId,
 			DisplayName: PLAYBACK_PREFIX + p.peerName,
 		},
@@ -578,7 +578,7 @@ func (p *PlaybackPeer) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
 	p.roomRTC.OnTrackEvent = p.onRTCTrackEvent
 	p.roomRTC.OnSpeaker = p.onRTCSpeaker
 
-	err = p.roomRTC.Join(p.playbackId, PLAYBACK_PREFIX+p.peerId)
+	err = p.roomRTC.Join(p.sessionId, PLAYBACK_PREFIX+p.peerId)
 	if err != nil {
 		p.joinRoomCh <- struct{}{}
 		return

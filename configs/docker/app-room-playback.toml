@@ -7,10 +7,10 @@ level = "info"
 # level = "debug"
 
 [nats]
-url = "nats://127.0.0.1:4222"
+url = "nats://nats:4222"
 
 [postgres]
-addr = "vidconf:5432"
+addr = "postgres:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
@@ -18,7 +18,7 @@ roomMgmtSchema = "room-mgmt"
 roomRecordSchema = "room-recorder"
 
 [minio]
-endpoint = "vidconf:9000"
+endpoint = "minio:9000"
 useSSL = false
 username = "minioadmin"
 password = "minioadmin"
@@ -26,7 +26,7 @@ bucketName = "vidconf"
 
 [signal]
 # The addr for grpc signalling
-addr = "vidconf:5551"
+addr = "signal:5551"
 
 [roommgmt]
 # sessionId to join session

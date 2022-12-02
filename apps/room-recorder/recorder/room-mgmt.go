@@ -2,10 +2,8 @@ package recorder
 
 import (
 	"database/sql"
-	"errors"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	log "github.com/pion/ion-log"
@@ -21,18 +19,12 @@ const (
 	NOT_FOUND_PK string        = "no rows in result set"
 )
 
-type Room struct {
-	status    string
-	startTime time.Time
-}
-
-func (s *RoomRecorderService) getRoomsByRoomid(roomId string) Room {
-	queryStmt := `SELECT "status", "startTime" FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
+func (s *RoomRecorderService) getRoomsByRoomid() {
+	queryStmt := `SELECT "startTime" FROM "` + s.roomRecordSchema + `"."room" WHERE "id"=$1`
 	var row *sql.Row
-	var room Room
 	var err error
 	for retry := 0; retry < RETRY_COUNT*RETRY_COUNT; retry++ {
-		row = s.postgresDB.QueryRow(queryStmt, roomId)
+		row = s.postgresDB.QueryRow(queryStmt, s.sessionId)
 		if row.Err() == nil {
 			break
 		}
@@ -40,30 +32,20 @@ func (s *RoomRecorderService) getRoomsByRoomid(roomId string) Room {
 	}
 	if row.Err() != nil {
 		log.Errorf("could not query database")
-		err = errors.New("could not query database")
+		os.Exit(1)
 	} else {
-		err = row.Scan(&room.status, &room.startTime)
+		var startTime time.Time
+		err = row.Scan(&startTime)
 		if err != nil {
 			if strings.Contains(err.Error(), NOT_FOUND_PK) {
-				log.Errorf(roomNotFound(roomId))
+				log.Errorf(roomNotFound(s.sessionId))
 				os.Exit(1)
-				return Room{}
 			} else {
 				log.Errorf("could not query database")
-				err = errors.New("could not query database")
+				os.Exit(1)
 			}
 		}
 	}
-	if err != nil {
-		log.Errorf("could not proceed with room recording")
-		os.Exit(1)
-	}
-	if room.status == ROOM_ENDED {
-		log.Errorf("Room has ended, could not proceed with room recording")
-		s.quitCh <- syscall.SIGTERM
-	}
-
-	return room
 }
 
 func roomNotFound(roomId string) string {

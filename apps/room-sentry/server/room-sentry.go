@@ -33,12 +33,14 @@ type SignalConf struct {
 	Addr string `mapstructure:"addr"`
 }
 
+type RoomMgmtConf struct {
+	SystemUserIdPrefix string `mapstructure:"systemUserIdPrefix"`
+	SystemUsername     string `mapstructure:"systemUsername"`
+}
+
 type RoomSentryConf struct {
-	PollInSeconds  int      `mapstructure:"pollInSeconds"`
-	Addr           string   `mapstructure:"address"`
-	SystemUserId   string   `mapstructure:"systemUserId"`
-	SystemUsername string   `mapstructure:"systemUsername"`
-	HttpEndpoints  []string `mapstructure:"httpEndpoints"`
+	PollInSeconds int    `mapstructure:"pollInSeconds"`
+	Addr          string `mapstructure:"address"`
 }
 
 type Config struct {
@@ -47,6 +49,7 @@ type Config struct {
 	Nats       NatsConf                     `mapstructure:"nats"`
 	Postgres   postgresService.PostgresConf `mapstructure:"postgres"`
 	Signal     SignalConf                   `mapstructure:"signal"`
+	RoomMgmt   RoomMgmtConf                 `mapstructure:"roommgmt"`
 	RoomSentry RoomSentryConf               `mapstructure:"roomsentry"`
 }
 
@@ -97,9 +100,6 @@ type RoomSentry struct {
 	ion.Node
 	natsConn         *nats.Conn
 	natsDiscoveryCli *natsDiscoveryClient.Client
-
-	// config
-	conf Config
 }
 
 // New create a RoomSentry node instance
@@ -114,7 +114,7 @@ func New() *RoomSentry {
 func (r *RoomSentry) Start(conf Config) error {
 	var err error
 
-	log.Infof("r.conf.Nats.URL===%+v", r.conf.Nats.URL)
+	log.Infof("conf.Nats.URL===%+v", conf.Nats.URL)
 	err = r.Node.Start(conf.Nats.URL)
 	if err != nil {
 		r.Close()
@@ -130,7 +130,7 @@ func (r *RoomSentry) Start(conf Config) error {
 
 	r.natsDiscoveryCli = ndc
 	r.natsConn = r.Node.NatsConn()
-	r.RoomSentryService = *NewRoomMgmtSentryService(conf)
+	r.RoomSentryService = *NewRoomMgmtSentryService(conf, r.natsConn)
 
 	// Register reflection service on nats-rpc server.
 	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))

@@ -28,14 +28,19 @@ bucketName = "vidconf"
 # The addr for grpc signalling
 addr = "vidconf:5551"
 
+[roommgmt]
+# sessionId to join session
+sessionId = "0bfecf6f-99ea-4b7b-a1e6-48046e02fded"
+# systemUserIdPrefix and systemUsername used by system to join the room sessions
+# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
+systemUserIdPrefix = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
+systemUsername = "Public Announcements"
+# playbackIdPrefix used for playback, no recording is performed, up to 8 hexadecimal characters
+# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-recorder.toml", "app-room-playback.toml"
+playbackIdPrefix = "bac00cab"
+
 [recorder]
 # The address the monitoring server will listen on.
 addr = "0.0.0.0:7081"
-# Roomid to record session
-roomid = "bac00cab-444b-42a3-828c-9631a916887e"
 # time in seconds per chopped section
 choppedInSeconds = 5
-# UserId and UserName used by system to join the room sessions
-# Must be identical across "app-room.toml", "app-room-mgmt.toml", "app-room-sentry.toml", "app-room-recorder.toml" & "app-room-playback.toml"
-systemUserId = "aeae639f-7a3a-4bcb-ba18-6996cf48e2f2"
-systemUsername = "Public Announcements"

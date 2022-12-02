@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	minio "github.com/minio/minio-go/v7"
+	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
 	minioService "github.com/pion/ion/apps/minio"
@@ -27,6 +28,12 @@ import (
 )
 
 const (
+	UPDATEROOM_TOPIC     string = "roomUpdates."
+	CREATEPLAYBACK_TOPIC string = "playbackCreate."
+	DELETEPLAYBACK_TOPIC string = "playbackDelete."
+	PAUSEPLAYBACK_TOPIC  string = "playbackPause."
+	PLAYBACK_TOPIC       string = "playback."
+
 	NOT_READY          string = "service is not yet ready"
 	MISS_REQUESTOR     string = "missing mandatory field 'requestor'"
 	MISS_START_TIME    string = "missing mandatory field 'startTime' in ISO9601 format"
@@ -217,8 +224,6 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."room"(   "id",
 																	"name",
 																	"status",
-																	"httpEndpoint",
-																	"signalEndpoint",
 																	"startTime",
 																	"endTime",
 																	"allowedUserId",
@@ -227,14 +232,12 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 																	"createdAt",
 																	"updatedBy",
 																	"updatedAt")
-					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			room.id,
 			room.name,
 			room.status,
-			"",
-			"",
 			room.startTime,
 			room.endTime,
 			room.allowedUserId,
@@ -274,7 +277,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		return
 	}
 
-	s.onRoomChanges <- room.id
+	go s.natsPublish(UPDATEROOM_TOPIC+room.id, nil)
 	getRoom, err := s.queryGetRoom(room.id, c)
 	if err != nil {
 		return
@@ -371,7 +374,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	s.onRoomChanges <- roomId
+	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -454,7 +457,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		return
 	}
 
-	s.onRoomChanges <- roomId
+	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
 	log.Infof("deleted roomId '%s'", roomId)
 	remarks := fmt.Sprintf("Ending roomId '%s' in %d minutes", roomId, timeLeftInSeconds/60)
 	c.JSON(http.StatusOK, map[string]interface{}{"remarks": remarks})
@@ -563,7 +566,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	s.onRoomChanges <- roomId
+	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -698,7 +701,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	s.onRoomChanges <- roomId
+	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -942,13 +945,11 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 	}
 	insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."playback"(   "id",
 																		"roomId",
-																		"name",
-																		"httpEndpoint",
-																		"signalEndpoint")
-					VALUES($1, $2, $3, $4, $5)`
+																		"name")
+					VALUES($1, $2, $3)`
 	playbackId := s.getPlaybackUuid(true)
 	for retry := 0; retry < RETRY_COUNT; retry++ {
-		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name, "", "")
+		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name)
 		if err == nil {
 			break
 		}
@@ -963,7 +964,8 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		return
 	}
-	s.onPlaybackCreate <- playbackId
+
+	go s.natsPublish(CREATEPLAYBACK_TOPIC+playbackId, nil)
 	c.JSON(http.StatusOK, map[string]interface{}{"id": playbackId, "durationInSeconds": durationInSeconds})
 }
 
@@ -989,7 +991,7 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(requestJSON))
 
-	httpEndpoint, err := s.queryPlayback(playbackId, c)
+	err = s.queryPlayback(playbackId, c)
 	if err != nil {
 		return
 	}
@@ -1022,7 +1024,7 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 	if postPlay.Audio != nil {
 		audio = strconv.FormatBool(*postPlay.Audio)
 	}
-	err = s.httpPost(httpEndpoint + "/" + speed + "/" + playfrom + "/" + chat + "/" + video + "/" + audio)
+	err = s.natsPublish(PLAYBACK_TOPIC+playbackId, []byte(speed+"/"+playfrom+"/"+chat+"/"+video+"/"+audio))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -1039,12 +1041,12 @@ func (s *RoomMgmtService) postPlaybackPause(c *gin.Context) {
 		return
 	}
 
-	httpEndpoint, err := s.queryPlayback(playbackId, c)
+	err := s.queryPlayback(playbackId, c)
 	if err != nil {
 		return
 	}
 
-	err = s.httpPost(httpEndpoint + "/pause")
+	err = s.natsPublish(PAUSEPLAYBACK_TOPIC+playbackId, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -1090,7 +1092,8 @@ func (s *RoomMgmtService) deletePlayback(c *gin.Context) {
 		}
 		return
 	}
-	s.onPlaybackDelete <- playbackId
+
+	go s.natsPublish(DELETEPLAYBACK_TOPIC+playbackId, nil)
 	c.Status(http.StatusOK)
 }
 
@@ -1430,7 +1433,7 @@ func (s *RoomMgmtService) getPlaybackUuid(isPlayback bool) string {
 	if isPlayback {
 		id = s.playbackIdPrefix + id[len(s.playbackIdPrefix):]
 	} else {
-		if id[:len(s.playbackIdPrefix)] == s.playbackIdPrefix {
+		if strings.HasPrefix(id, s.playbackIdPrefix) {
 			return s.getPlaybackUuid(isPlayback)
 		}
 	}
@@ -2022,8 +2025,8 @@ func (s *RoomMgmtService) queryRoomRecord(roomId string) (RoomRecord, error) {
 	return roomRecord, nil
 }
 
-func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) (string, error) {
-	queryStmt := `SELECT "httpEndpoint" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
+func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) error {
+	queryStmt := `SELECT "roomId" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
 	var row *sql.Row
 	for retry := 0; retry < RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, playbackId)
@@ -2036,10 +2039,10 @@ func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) (stri
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
 		log.Errorf(errorString)
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return "", row.Err()
+		return row.Err()
 	}
-	var httpEndpoint string
-	err := row.Scan(&httpEndpoint)
+	var roomId string
+	err := row.Scan(&roomId)
 	if err != nil {
 		if strings.Contains(err.Error(), NOT_FOUND_PK) {
 			errorString := s.roomNotFound(playbackId)
@@ -2050,15 +2053,9 @@ func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) (stri
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		}
-		return "", err
+		return err
 	}
-	if httpEndpoint == "" {
-		errorString := "playback is not yet ready"
-		log.Errorf(errorString)
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
-		return "", err
-	}
-	return httpEndpoint, nil
+	return nil
 }
 
 func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gin.Context) error {
@@ -2234,10 +2231,8 @@ func (s *RoomMgmtService) getPeers(roomId string) []User {
 
 	users := make([]User, 0)
 	for _, peer := range peers {
-		if len(peer.Uid) >= s.lenSystemUserId {
-			if peer.Uid[:s.lenSystemUserId] == s.systemUserId {
-				continue
-			}
+		if strings.HasPrefix(peer.Uid, s.systemUserIdPrefix) {
+			continue
 		}
 		var user User
 		user.UserId = peer.Uid
@@ -2294,11 +2289,8 @@ func (s *RoomMgmtService) closeRoomService(sdkConnector *sdk.Connector, roomServ
 }
 
 type RoomMgmtService struct {
-	conf Config
-
-	onRoomChanges    chan string
-	onPlaybackCreate chan string
-	onPlaybackDelete chan string
+	conf     Config
+	natsConn *nats.Conn
 
 	timeLive  string
 	timeReady string
@@ -2310,12 +2302,11 @@ type RoomMgmtService struct {
 	minioClient *minio.Client
 	bucketName  string
 
-	systemUserId     string
-	lenSystemUserId  int
-	playbackIdPrefix string
+	systemUserIdPrefix string
+	playbackIdPrefix   string
 }
 
-func NewRoomMgmtService(config Config) *RoomMgmtService {
+func NewRoomMgmtService(config Config, natsConn *nats.Conn) *RoomMgmtService {
 	timeLive := time.Now().Format(time.RFC3339)
 	err := testRedisConnection(config)
 	if err != nil {
@@ -2326,11 +2317,8 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 	postgresDB := postgresService.GetPostgresDB(config.Postgres)
 
 	s := &RoomMgmtService{
-		conf: config,
-
-		onRoomChanges:    make(chan string, 2048),
-		onPlaybackCreate: make(chan string, 2048),
-		onPlaybackDelete: make(chan string, 2048),
+		conf:     config,
+		natsConn: natsConn,
 
 		timeLive:  timeLive,
 		timeReady: time.Now().Format(time.RFC3339),
@@ -2342,13 +2330,11 @@ func NewRoomMgmtService(config Config) *RoomMgmtService {
 		minioClient: minioClient,
 		bucketName:  config.Minio.BucketName,
 
-		systemUserId:     config.RoomMgmt.SystemUserId,
-		lenSystemUserId:  len(config.RoomMgmt.SystemUserId),
-		playbackIdPrefix: config.RoomMgmt.PlaybackIdPrefix,
+		systemUserIdPrefix: config.RoomMgmt.SystemUserIdPrefix,
+		playbackIdPrefix:   config.RoomMgmt.PlaybackIdPrefix,
 	}
 
 	go s.start()
-	go s.checkForRemoteCtrl()
 
 	return s
 }
@@ -2376,53 +2362,16 @@ func testRedisConnection(config Config) error {
 	return nil
 }
 
-func (s *RoomMgmtService) checkForRemoteCtrl() {
-	for {
-		select {
-		case roomId := <-s.onRoomChanges:
-			log.Infof("changes to roomid '%s'", roomId)
-			requestURL := s.conf.RoomSentry.Url + "/rooms/" + roomId
-			go s.httpPost(requestURL)
-		case playbackId := <-s.onPlaybackCreate:
-			log.Infof("playbackid '%s' created", playbackId)
-			requestURL := s.conf.RoomSentry.Url + "/playback/" + playbackId
-			go s.httpPost(requestURL)
-		case playbackId := <-s.onPlaybackDelete:
-			log.Infof("playbackid '%s' deleted", playbackId)
-			requestURL := s.conf.RoomSentry.Url + "/delete/playback/" + playbackId
-			go s.httpPost(requestURL)
-		}
-	}
-}
-
-func (s *RoomMgmtService) httpPost(requestURL string) error {
-	request, err := http.NewRequest(http.MethodPost, requestURL, nil)
+func (s *RoomMgmtService) natsPublish(topic string, data []byte) error {
+	log.Infof("publishing to topic '%s'", topic)
+	resp, err := s.natsConn.Request(topic, data, RETRY_DELAY)
 	if err != nil {
-		log.Errorf("error sending http: %v", err)
+		log.Errorf("error publishing topic '%': %v", topic, err)
 		return err
 	}
-	for retry := 0; retry < RETRY_COUNT; retry++ {
-		err = s.httpClient(request)
-		if err == nil {
-			break
-		}
-		time.Sleep(RETRY_DELAY)
-	}
-	if err != nil {
-		log.Errorf("error sending http: %v", err)
-		return err
-	}
-	return nil
-}
-
-func (s *RoomMgmtService) httpClient(request *http.Request) error {
-	var response *http.Response
-	client := &http.Client{}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	} else if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("response.StatusCode=%v", response.StatusCode)
+	if string(resp.Data) != "" {
+		log.Errorf("error publishing topic '%': %v", topic, string(resp.Data))
+		return errors.New(string(resp.Data))
 	}
 	return nil
 }
