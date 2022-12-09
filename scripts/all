@@ -44,6 +44,12 @@ function start()
     echo "------------room-sentry---------"
     $APP_DIR/scripts/service start app-room-sentry
 
+    echo "------------room-recorder---------"
+    $APP_DIR/scripts/service start app-room-recorder
+
+    echo "------------room-playback---------"
+    $APP_DIR/scripts/service start app-room-playback
+
     # echo "------------avp--------------"
     # $APP_DIR/scripts/service start avp
 
@@ -52,11 +58,17 @@ function start()
 
 function stop()
 {
-    echo "------------room-mgmt---------"
-    $APP_DIR/scripts/service stop app-room-mgmt
+    echo "------------room-recorder---------"
+    $APP_DIR/scripts/service stop app-room-recorder
+
+    echo "------------room-playback---------"
+    $APP_DIR/scripts/service stop app-room-playback
 
     echo "------------room-sentry---------"
     $APP_DIR/scripts/service stop app-room-sentry
+
+    echo "------------room-mgmt---------"
+    $APP_DIR/scripts/service stop app-room-mgmt
 
     echo "------------room--------------"
     $APP_DIR/scripts/service stop app-room
@@ -107,6 +119,12 @@ function status()
 
     echo "------------room-sentry---------"
     $APP_DIR/scripts/service status app-room-sentry
+
+    echo "------------room-recorder---------"
+    $APP_DIR/scripts/service status app-room-recorder
+
+    echo "------------room-playback---------"
+    $APP_DIR/scripts/service status app-room-playback
 
     echo "--------------------------"
 }

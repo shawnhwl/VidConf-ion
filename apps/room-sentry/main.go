@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/pion/ion/apps/room-sentry/server"
+	sentry "github.com/pion/ion/apps/room-sentry/server"
 
 	log "github.com/pion/ion-log"
 )
@@ -22,25 +22,24 @@ func main() {
 		return
 	}
 
-	conf := server.Config{}
+	conf := sentry.Config{}
 	err := conf.Load(confFile)
 	if err != nil {
-		log.Errorf("config load error: %v", err)
+		log.Errorf("config load error: %s", err)
 		return
 	}
 
 	log.Init(conf.Log.Level)
 	log.Infof("--- Starting Room-Sentry ---")
 
-	node := server.New()
+	node := sentry.New()
 	if err := node.Start(conf); err != nil {
-		log.Errorf("room-sentry init start: %v", err)
-		os.Exit(-1)
+		log.Errorf("room-sentry init start: %s", err)
+		os.Exit(1)
 	}
-	defer node.Close()
 
 	// Press Ctrl+C to exit the process
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
-	<-ch
+	quitCh := make(chan os.Signal, 1)
+	signal.Notify(quitCh, os.Interrupt, syscall.SIGTERM)
+	<-quitCh
 }

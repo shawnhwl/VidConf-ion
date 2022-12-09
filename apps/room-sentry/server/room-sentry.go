@@ -1,25 +1,13 @@
-package server
+package sentry
 
 import (
 	"os"
 
-	natsDiscoveryClient "github.com/cloudwebrtc/nats-discovery/pkg/client"
-	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
-	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
-	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	postgresService "github.com/pion/ion/apps/postgres"
-	"github.com/pion/ion/pkg/ion"
-	"github.com/pion/ion/pkg/proto"
-	"github.com/pion/ion/pkg/runner"
 	"github.com/pion/ion/pkg/util"
 	"github.com/spf13/viper"
-	"google.golang.org/grpc/reflection"
 )
-
-type GlobalConf struct {
-	Dc string `mapstructure:"dc"`
-}
 
 type LogConf struct {
 	Level string `mapstructure:"level"`
@@ -44,7 +32,6 @@ type RoomSentryConf struct {
 }
 
 type Config struct {
-	Global     GlobalConf                   `mapstructure:"global"`
 	Log        LogConf                      `mapstructure:"log"`
 	Nats       NatsConf                     `mapstructure:"nats"`
 	Postgres   postgresService.PostgresConf `mapstructure:"postgres"`
@@ -71,7 +58,7 @@ func (c *Config) Load(file string) error {
 
 	err = viper.ReadInConfig()
 	if err != nil {
-		log.Errorf("config file %s read failed. %v\n", file, err)
+		log.Errorf("config file %s read failed. %s\n", file, err)
 		return err
 	}
 
@@ -80,7 +67,7 @@ func (c *Config) Load(file string) error {
 		return err
 	}
 	if err != nil {
-		log.Errorf("config file %s loaded failed. %v\n", file, err)
+		log.Errorf("config file %s loaded failed. %s\n", file, err)
 		return err
 	}
 
@@ -90,24 +77,13 @@ func (c *Config) Load(file string) error {
 
 // RoomSentry represents a room-sentry node
 type RoomSentry struct {
-	// for standalone running
-	runner.Service
-
 	// HTTP room-sentry service
 	RoomSentryService
-
-	// for distributed node running
-	ion.Node
-	natsConn         *nats.Conn
-	natsDiscoveryCli *natsDiscoveryClient.Client
 }
 
 // New create a RoomSentry node instance
 func New() *RoomSentry {
-	api := &RoomSentry{
-		Node: ion.NewNode("room-sentry-" + util.RandomString(6)),
-	}
-	return api
+	return &RoomSentry{}
 }
 
 // Start RoomSentry node
@@ -115,56 +91,13 @@ func (r *RoomSentry) Start(conf Config) error {
 	var err error
 
 	log.Infof("conf.Nats.URL===%+v", conf.Nats.URL)
-	err = r.Node.Start(conf.Nats.URL)
+	natsConn, err := util.NewNatsConn(conf.Nats.URL)
 	if err != nil {
-		r.Close()
+		log.Errorf("new nats conn error %s", err)
 		return err
 	}
 
-	ndc, err := natsDiscoveryClient.NewClient(r.Node.NatsConn())
-	if err != nil {
-		log.Errorf("failed to create discovery client: %v", err)
-		ndc.Close()
-		return err
-	}
-
-	r.natsDiscoveryCli = ndc
-	r.natsConn = r.Node.NatsConn()
-	r.RoomSentryService = *NewRoomMgmtSentryService(conf, r.natsConn)
-
-	// Register reflection service on nats-rpc server.
-	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))
-
-	node := discovery.Node{
-		DC:      conf.Global.Dc,
-		Service: proto.ServiceROOMSENTRY,
-		NID:     r.Node.NID,
-		RPC: discovery.RPC{
-			Protocol: discovery.NGRPC,
-			Addr:     conf.Nats.URL,
-			//Params:   map[string]string{"username": "foo", "password": "bar"},
-		},
-	}
-
-	go func() {
-		err := r.Node.KeepAlive(node)
-		if err != nil {
-			log.Errorf("sfu.Node.KeepAlive(%v) error %v", r.Node.NID, err)
-		}
-	}()
-
-	//Watch ALL nodes.
-	go func() {
-		err := r.Node.Watch(proto.ServiceALL)
-		if err != nil {
-			log.Errorf("Node.Watch(proto.ServiceALL) error %v", err)
-		}
-	}()
+	r.RoomSentryService = *NewRoomMgmtSentryService(conf, natsConn)
 
 	return nil
-}
-
-// Close all
-func (s *RoomSentry) Close() {
-	s.Node.Close()
 }

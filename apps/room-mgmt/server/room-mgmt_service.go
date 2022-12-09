@@ -1,4 +1,4 @@
-package server
+package mgmt
 
 import (
 	"bytes"
@@ -22,42 +22,10 @@ import (
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
+	constants "github.com/pion/ion/apps/constants"
 	minioService "github.com/pion/ion/apps/minio"
 	postgresService "github.com/pion/ion/apps/postgres"
 	"github.com/pion/ion/pkg/db"
-)
-
-const (
-	UPDATEROOM_TOPIC     string = "roomUpdates."
-	CREATEPLAYBACK_TOPIC string = "playbackCreate."
-	DELETEPLAYBACK_TOPIC string = "playbackDelete."
-	PAUSEPLAYBACK_TOPIC  string = "playbackPause."
-	PLAYBACK_TOPIC       string = "playback."
-
-	NOT_READY          string = "service is not yet ready"
-	MISS_REQUESTOR     string = "missing mandatory field 'requestor'"
-	MISS_START_TIME    string = "missing mandatory field 'startTime' in ISO9601 format"
-	MISS_END_TIME      string = "missing mandatory field 'endTime' in ISO9601 format"
-	MISS_ANNOUNCE_ID   string = "missing mandatory field 'announcements.announceId'"
-	MISS_ANNOUNCE_MSG  string = "missing mandatory non-empty string field 'announcements.message'"
-	MISS_ANNOUNCE_TIME string = "missing mandatory field 'announcements.relativeTimeInSeconds'"
-	MISS_ANNOUNCE_REL  string = "missing valid field 'announcements.relativeFrom' (accepts only: NULL|'start'|'end')"
-	DUP_ANNOUNCE_ID    string = "forbidden duplication of 'announcements.announceId'"
-
-	ANNOUNCEMENT_QUEUED string = "Queued"
-	ANNOUNCEMENT_SENT   string = "Sent"
-	ROOM_BOOKED         string = "Booked"
-	ROOM_STARTED        string = "Started"
-	ROOM_ENDED          string = "Ended"
-	FROM_START          string = "start"
-	FROM_END            string = "end"
-
-	RETRY_COUNT  int           = 3
-	RETRY_DELAY  time.Duration = 5 * time.Second
-	DUP_PK       string        = "duplicate key value violates unique constraint"
-	NOT_FOUND_PK string        = "no rows in result set"
-
-	RECONNECTION_INTERVAL time.Duration = 10 * time.Second
 )
 
 func (s *RoomMgmtService) getLiveness(c *gin.Context) {
@@ -68,7 +36,7 @@ func (s *RoomMgmtService) getLiveness(c *gin.Context) {
 func (s *RoomMgmtService) getReadiness(c *gin.Context) {
 	log.Infof("GET /readiness")
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
+		c.String(http.StatusInternalServerError, constants.ErrNotReady.Error())
 		return
 	}
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
@@ -181,7 +149,7 @@ type RoomRecord struct {
 func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	log.Infof("POST /rooms")
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -198,20 +166,20 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	}
 
 	if patchRoom.StartTime == nil {
-		log.Warnf(MISS_START_TIME)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_START_TIME})
+		log.Warnf(constants.ErrMissStartTime.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissStartTime.Error()})
 		return
 	}
 	if patchRoom.EndTime == nil {
-		log.Warnf(MISS_END_TIME)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_END_TIME})
+		log.Warnf(constants.ErrMissEndTime.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissEndTime.Error()})
 		return
 	}
 
 	var room Room
 	room.id = s.getPlaybackUuid(false)
 	room.name = ""
-	room.status = ROOM_BOOKED
+	room.status = constants.ROOM_BOOKED
 	room.startTime = *patchRoom.StartTime
 	room.endTime = *patchRoom.EndTime
 	room.announcements = make([]Announcement, 0)
@@ -233,7 +201,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 																	"updatedBy",
 																	"updatedAt")
 					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt,
 			room.id,
 			room.name,
@@ -249,10 +217,10 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		if err == nil {
 			break
 		}
-		if strings.Contains(err.Error(), DUP_PK) {
+		if strings.Contains(err.Error(), constants.DUP_PK) {
 			room.id = s.getPlaybackUuid(false)
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -264,12 +232,12 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	err = s.patchRoom(&room, patchRoom, c)
 	if err != nil {
 		deleteStmt := `DELETE FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(deleteStmt, room.id)
 			if err == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			log.Errorf("could not delete from database: %s", err)
@@ -277,7 +245,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 		return
 	}
 
-	go s.natsPublish(UPDATEROOM_TOPIC+room.id, nil)
+	go s.natsPublish(constants.UPDATEROOM_TOPIC+room.id, nil)
 	getRoom, err := s.queryGetRoom(room.id, c)
 	if err != nil {
 		return
@@ -289,7 +257,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 func (s *RoomMgmtService) getRooms(c *gin.Context) {
 	log.Infof("GET /rooms")
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -298,12 +266,12 @@ func (s *RoomMgmtService) getRooms(c *gin.Context) {
 	var rows *sql.Rows
 	var err error
 	queryStmt := `SELECT "id" FROM "` + s.roomMgmtSchema + `"."room"`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		rows, err = s.postgresDB.Query(queryStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
@@ -332,7 +300,7 @@ func (s *RoomMgmtService) getRoomsByRoomid(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -348,7 +316,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("PATCH /rooms/%s", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -374,7 +342,7 @@ func (s *RoomMgmtService) patchRoomsByRoomid(c *gin.Context) {
 		return
 	}
 
-	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
+	go s.natsPublish(constants.UPDATEROOM_TOPIC+roomId, nil)
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -387,7 +355,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("DELETE /rooms/%s", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -406,8 +374,8 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 	log.Infof("request:\n%s", string(requestJSON))
 
 	if deleteRoom.Requestor == nil {
-		log.Warnf(MISS_REQUESTOR)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_REQUESTOR})
+		log.Warnf(constants.ErrMissRequestor.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissRequestor.Error()})
 		return
 	}
 
@@ -438,7 +406,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 						"updatedAt"=$2,
 						"endTime"=$3,
 						"earlyEndReason"=$4 WHERE "id"=$5`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
 			room.updatedAt,
@@ -448,7 +416,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -457,7 +425,7 @@ func (s *RoomMgmtService) deleteRoomsByRoomId(c *gin.Context) {
 		return
 	}
 
-	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
+	go s.natsPublish(constants.UPDATEROOM_TOPIC+roomId, nil)
 	log.Infof("deleted roomId '%s'", roomId)
 	remarks := fmt.Sprintf("Ending roomId '%s' in %d minutes", roomId, timeLeftInSeconds/60)
 	c.JSON(http.StatusOK, map[string]interface{}{"remarks": remarks})
@@ -468,7 +436,7 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 	userId := c.Param("userid")
 	log.Infof("DELETE /rooms/%s/users/%s", roomId, userId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -487,8 +455,8 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 	log.Infof("request:\n%s", string(requestJSON))
 
 	if deleteUser.Requestor == nil {
-		log.Warnf(MISS_REQUESTOR)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_REQUESTOR})
+		log.Warnf(constants.ErrMissRequestor.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissRequestor.Error()})
 		return
 	}
 
@@ -497,7 +465,7 @@ func (s *RoomMgmtService) deleteUsersByUserId(c *gin.Context) {
 		return
 	}
 
-	if room.status != ROOM_STARTED {
+	if room.status != constants.ROOM_STARTED {
 		log.Warnf(s.roomNotStarted(roomId))
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotStarted(roomId)})
 		return
@@ -521,7 +489,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("PUT /rooms/%s/announcements", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -549,7 +517,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room"
 					SET "updatedBy"=$1,
 						"updatedAt"=$2 WHERE "id"=$3`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
 			room.updatedAt,
@@ -557,7 +525,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -566,7 +534,7 @@ func (s *RoomMgmtService) putAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
+	go s.natsPublish(constants.UPDATEROOM_TOPIC+roomId, nil)
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -579,7 +547,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("DELETE /rooms/%s/announcements", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -597,8 +565,8 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	}
 	log.Infof("request:\n%s", string(requestJSON))
 	if deleteAnnounce.Requestor == nil {
-		log.Warnf(MISS_REQUESTOR)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_REQUESTOR})
+		log.Warnf(constants.ErrMissRequestor.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissRequestor.Error()})
 		return
 	}
 
@@ -625,12 +593,12 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	if isDeleteAll {
 		room.announcements = make([]Announcement, 0)
 		deleteStmt := `DELETE FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "roomId"=$1`
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(deleteStmt, room.id)
 			if err == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not delete from database: %s", err)
@@ -664,12 +632,12 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		}
 		deleteStmt := `DELETE FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "id"=$1`
 		for key := range idMap {
-			for retry := 0; retry < RETRY_COUNT; retry++ {
+			for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 				_, err = s.postgresDB.Exec(deleteStmt, key)
 				if err == nil {
 					break
 				}
-				time.Sleep(RETRY_DELAY)
+				time.Sleep(constants.RETRY_DELAY)
 			}
 			if err != nil {
 				errorString := fmt.Sprintf("could not delete from database: %s", err)
@@ -684,7 +652,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room"
 					SET "updatedBy"=$1,
 						"updatedAt"=$2 WHERE "id"=$3`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
 			room.updatedAt,
@@ -692,7 +660,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -701,7 +669,7 @@ func (s *RoomMgmtService) deleteAnnouncementsByRoomId(c *gin.Context) {
 		return
 	}
 
-	go s.natsPublish(UPDATEROOM_TOPIC+roomId, nil)
+	go s.natsPublish(constants.UPDATEROOM_TOPIC+roomId, nil)
 	getRoom, err := s.queryGetRoom(roomId, c)
 	if err != nil {
 		return
@@ -725,6 +693,7 @@ type GetChatRange struct {
 type ChatPayload struct {
 	Uid        string      `json:"uid"`
 	Name       string      `json:"name"`
+	MimeType   string      `json:"mimeType"`
 	Text       *string     `json:"text,omitempty"`
 	Timestamp  time.Time   `json:"timestamp"`
 	Base64File *Attachment `json:"base64File,omitempty"`
@@ -755,7 +724,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChatinfo(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/chats", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -775,7 +744,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/chats", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -789,7 +758,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
 	for id := range getChatRange.Msg {
 		if getChatRange.Msg[id].Base64File != nil {
 			var object *minio.Object
-			for retry := 0; retry < RETRY_COUNT; retry++ {
+			for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 				object, err = s.minioClient.GetObject(context.Background(),
 					s.bucketName,
 					roomId+*getChatRange.Msg[id].Base64File.FilePath,
@@ -797,7 +766,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChats(c *gin.Context) {
 				if err == nil {
 					break
 				}
-				time.Sleep(RETRY_DELAY)
+				time.Sleep(constants.RETRY_DELAY)
 			}
 			if err != nil {
 				errorString := fmt.Sprintf("could not download attachment: %s", err)
@@ -827,7 +796,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 	toindex := c.Param("toindex")
 	log.Infof("GET /rooms/%s/chats/%s/%s", roomId, fromindex, toindex)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -875,7 +844,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 	for id := fromIndex; id <= toIndex; id++ {
 		if chatPayloads[id].Base64File != nil {
 			var object *minio.Object
-			for retry := 0; retry < RETRY_COUNT; retry++ {
+			for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 				object, err = s.minioClient.GetObject(context.Background(),
 					s.bucketName,
 					roomId+*chatPayloads[id].Base64File.FilePath,
@@ -883,7 +852,7 @@ func (s *RoomMgmtService) getRoomsByRoomidChatRange(c *gin.Context) {
 				if err == nil {
 					break
 				}
-				time.Sleep(RETRY_DELAY)
+				time.Sleep(constants.RETRY_DELAY)
 			}
 			if err != nil {
 				errorString := fmt.Sprintf("could not download attachment: %s", err)
@@ -921,17 +890,17 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("POST /playback/rooms/%s", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
 	roomRecord, err := s.queryRoomRecord(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotFound(roomId)})
 		} else {
-			errorString := fmt.Sprintf("could not query database: %s", err.Error())
+			errorString := fmt.Sprintf("could not query database: %s", err)
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		}
@@ -948,15 +917,15 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 																		"name")
 					VALUES($1, $2, $3)`
 	playbackId := s.getPlaybackUuid(true)
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt, playbackId, roomId, roomRecord.name)
 		if err == nil {
 			break
 		}
-		if strings.Contains(err.Error(), DUP_PK) {
+		if strings.Contains(err.Error(), constants.DUP_PK) {
 			playbackId = s.getPlaybackUuid(true)
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -965,7 +934,26 @@ func (s *RoomMgmtService) postPlayback(c *gin.Context) {
 		return
 	}
 
-	go s.natsPublish(CREATEPLAYBACK_TOPIC+playbackId, nil)
+	sdkConnector, roomService, err := s.getRoomService(s.conf.Signal.Addr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	defer s.closeRoomService(sdkConnector, roomService)
+	err = roomService.CreateRoom(sdk.RoomInfo{Sid: playbackId, Name: roomRecord.name})
+	if err != nil {
+		errorString := fmt.Sprintf("Error creating playbackId '%s' : %s", playbackId, err)
+		log.Errorf(errorString)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
+		return
+	}
+
+	err = s.natsPublish(constants.STARTPLAYBACK_TOPIC, []byte(playbackId))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
 	c.JSON(http.StatusOK, map[string]interface{}{"id": playbackId, "durationInSeconds": durationInSeconds})
 }
 
@@ -973,7 +961,7 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 	playbackId := c.Param("playbackid")
 	log.Infof("POST /playback/%s/play", playbackId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -1024,7 +1012,7 @@ func (s *RoomMgmtService) postPlaybackPlay(c *gin.Context) {
 	if postPlay.Audio != nil {
 		audio = strconv.FormatBool(*postPlay.Audio)
 	}
-	err = s.natsPublish(PLAYBACK_TOPIC+playbackId, []byte(speed+"/"+playfrom+"/"+chat+"/"+video+"/"+audio))
+	err = s.natsPublish(constants.PLAYBACK_TOPIC+playbackId, []byte(speed+"/"+playfrom+"/"+chat+"/"+video+"/"+audio))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -1037,7 +1025,7 @@ func (s *RoomMgmtService) postPlaybackPause(c *gin.Context) {
 	playbackId := c.Param("playbackid")
 	log.Infof("POST /playback/%s/pause", playbackId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
@@ -1046,7 +1034,7 @@ func (s *RoomMgmtService) postPlaybackPause(c *gin.Context) {
 		return
 	}
 
-	err = s.natsPublish(PAUSEPLAYBACK_TOPIC+playbackId, nil)
+	err = s.natsPublish(constants.PAUSEPLAYBACK_TOPIC+playbackId, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -1059,18 +1047,18 @@ func (s *RoomMgmtService) deletePlayback(c *gin.Context) {
 	playbackId := c.Param("playbackid")
 	log.Infof("DELETE /playback/%s", playbackId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
 	queryStmt := `SELECT "id" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
 	var row *sql.Row
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, playbackId)
 		if row.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if row.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
@@ -1081,7 +1069,7 @@ func (s *RoomMgmtService) deletePlayback(c *gin.Context) {
 	var id string
 	err := row.Scan(&id)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			errorString := s.roomNotFound(playbackId)
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -1093,7 +1081,7 @@ func (s *RoomMgmtService) deletePlayback(c *gin.Context) {
 		return
 	}
 
-	go s.natsPublish(DELETEPLAYBACK_TOPIC+playbackId, nil)
+	go s.natsPublish(constants.DELETEPLAYBACK_TOPIC+playbackId, nil)
 	c.Status(http.StatusOK)
 }
 
@@ -1116,13 +1104,13 @@ func (s *RoomMgmtService) postMetadata(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("POST /rooms/%s/metadata", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
 	_, err := s.queryRoomRecord(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
 		} else {
@@ -1159,15 +1147,15 @@ func (s *RoomMgmtService) postMetadata(c *gin.Context) {
 																		"data")
 					VALUES($1, $2, $3, $4)`
 	id := uuid.NewString()
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(insertStmt, id, roomId, time.Now(), requestJSON)
 		if err == nil {
 			break
 		}
-		if strings.Contains(err.Error(), DUP_PK) {
+		if strings.Contains(err.Error(), constants.DUP_PK) {
 			id = uuid.NewString()
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -1184,13 +1172,13 @@ func (s *RoomMgmtService) getMetadata(c *gin.Context) {
 	roomId := c.Param("roomid")
 	log.Infof("GET /rooms/%s/metadata", roomId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
 	_, err := s.queryRoomRecord(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
 		} else {
@@ -1215,13 +1203,13 @@ func (s *RoomMgmtService) patchMetadata(c *gin.Context) {
 	metadataId := c.Param("id")
 	log.Infof("PATCH /rooms/%s/metadata/%s", roomId, metadataId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
 	_, err := s.queryRoomRecord(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
 		} else {
@@ -1234,12 +1222,12 @@ func (s *RoomMgmtService) patchMetadata(c *gin.Context) {
 	queryStmt := `SELECT "data"
 					 FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1 AND "id"=$2`
 	var row *sql.Row
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, roomId, metadataId)
 		if row.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if row.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
@@ -1250,7 +1238,7 @@ func (s *RoomMgmtService) patchMetadata(c *gin.Context) {
 	dataJSON := make([]byte, 2048)
 	err = row.Scan(&dataJSON)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.metadataNotFound(metadataId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.metadataNotFound(metadataId)})
 		} else {
@@ -1284,14 +1272,14 @@ func (s *RoomMgmtService) patchMetadata(c *gin.Context) {
 
 	updateStmt := `UPDATE "` + s.roomRecordSchema + `"."metadata"
 					SET "data"=$1 WHERE "id"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			dataJSON,
 			metadataId)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -1314,13 +1302,13 @@ func (s *RoomMgmtService) deleteMetadata(c *gin.Context) {
 	metadataId := c.Param("id")
 	log.Infof("DELETE /rooms/%s/metadata/%s", roomId, metadataId)
 	if s.timeReady == "" {
-		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": NOT_READY})
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": constants.ErrNotReady.Error()})
 		return
 	}
 
 	_, err := s.queryRoomRecord(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotReady(roomId)})
 		} else {
@@ -1333,12 +1321,12 @@ func (s *RoomMgmtService) deleteMetadata(c *gin.Context) {
 	queryStmt := `SELECT "id"
 					 FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1 AND "id"=$2`
 	var row *sql.Row
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, roomId, metadataId)
 		if row.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if row.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
@@ -1349,7 +1337,7 @@ func (s *RoomMgmtService) deleteMetadata(c *gin.Context) {
 	var id string
 	err = row.Scan(&id)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.metadataNotFound(metadataId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.metadataNotFound(metadataId)})
 		} else {
@@ -1360,12 +1348,12 @@ func (s *RoomMgmtService) deleteMetadata(c *gin.Context) {
 		return
 	}
 	deleteStmt := `DELETE FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1 AND "id"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(deleteStmt, roomId, metadataId)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not delete from database: %s", err.Error())
@@ -1388,12 +1376,12 @@ func (s *RoomMgmtService) getAllMetadata(roomId string, c *gin.Context) (GetAllM
 						 "timestamp",
 						 "data"
 					 FROM "` + s.roomRecordSchema + `"."metadata" WHERE "roomId"=$1`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		metadatarows, err = s.postgresDB.Query(queryStmt, roomId)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
@@ -1463,7 +1451,7 @@ func (s *RoomMgmtService) roomHasEnded(roomId string) string {
 func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, ChatPayloads, error) {
 	roomRecord, err := s.queryRoomRecord(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotFound(roomId)})
 		} else {
@@ -1478,18 +1466,19 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 	var chatrows *sql.Rows
 	queryStmt := `SELECT "userId",
 						 "userName",
+						 "mimeType",
 						 "timestamp",
 						 "text",
 						 "fileName",
 						 "fileSize",
 						 "filePath"
 					 FROM "` + s.roomRecordSchema + `"."chat" WHERE "roomId"=$1`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		chatrows, err = s.postgresDB.Query(queryStmt, roomId)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
@@ -1505,6 +1494,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 		var filePath string
 		err := chatrows.Scan(&chat.Uid,
 			&chat.Name,
+			&chat.MimeType,
 			&chat.Timestamp,
 			&text,
 			&fileinfo.Name,
@@ -1533,7 +1523,7 @@ func (s *RoomMgmtService) getChats(roomId string, c *gin.Context) (RoomRecord, C
 func (s *RoomMgmtService) getEditableRoom(roomId string, c *gin.Context) (Room, error) {
 	room, err := s.queryRoom(roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			log.Warnf(s.roomNotFound(roomId))
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomNotFound(roomId)})
 		} else {
@@ -1543,7 +1533,7 @@ func (s *RoomMgmtService) getEditableRoom(roomId string, c *gin.Context) (Room, 
 		}
 		return Room{}, err
 	}
-	if room.status == ROOM_ENDED {
+	if room.status == constants.ROOM_ENDED {
 		log.Warnf(s.roomHasEnded(roomId))
 		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": s.roomHasEnded(roomId)})
 		return Room{}, errors.New(s.roomHasEnded(roomId))
@@ -1561,9 +1551,9 @@ func (s *RoomMgmtService) patchRoomRequest(patchRoom PatchRoom, c *gin.Context) 
 	}
 	log.Infof("request:\n%s", string(requestJSON))
 	if patchRoom.Requestor == nil {
-		log.Warnf(MISS_REQUESTOR)
-		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_REQUESTOR})
-		return errors.New(MISS_REQUESTOR)
+		log.Warnf(constants.ErrMissRequestor.Error())
+		c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissRequestor.Error()})
+		return errors.New(constants.ErrMissRequestor.Error())
 	}
 	return nil
 }
@@ -1574,7 +1564,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		room.name = *patchRoom.Name
 	}
 	if patchRoom.StartTime != nil {
-		if room.status == ROOM_STARTED && room.startTime != *patchRoom.StartTime {
+		if room.status == constants.ROOM_STARTED && room.startTime != *patchRoom.StartTime {
 			errorString := fmt.Sprintf("RoomId '%s' has already started", room.id)
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -1617,7 +1607,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 						"endTime"=$5,
 						"allowedUserId"=$6 WHERE "id"=$7`
 	var err error
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
 			room.updatedAt,
@@ -1629,7 +1619,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not update database: %s", err)
@@ -1641,15 +1631,15 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 	idMap := make(map[string]int)
 	for _, patch := range patchRoom.Announcements {
 		if patch.Id == nil {
-			log.Warnf(MISS_ANNOUNCE_ID)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_ID})
-			return errors.New(MISS_ANNOUNCE_ID)
+			log.Warnf(constants.ErrMissAnnounceId.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceId.Error()})
+			return errors.New(constants.ErrMissAnnounceId.Error())
 		}
 		_, exist := idMap[*patch.Id]
 		if exist {
-			log.Warnf(DUP_ANNOUNCE_ID)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": DUP_ANNOUNCE_ID})
-			return errors.New(DUP_ANNOUNCE_ID)
+			log.Warnf(constants.ErrDuplicateAnnounceId.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrDuplicateAnnounceId.Error()})
+			return errors.New(constants.ErrDuplicateAnnounceId.Error())
 		}
 		idMap[*patch.Id] = 1
 
@@ -1657,7 +1647,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		for id := range room.announcements {
 			if room.announcements[id].id == *patch.Id {
 				isPatched = true
-				if room.announcements[id].status == ANNOUNCEMENT_SENT {
+				if room.announcements[id].status == constants.ANNOUNCEMENT_SENT {
 					errorString := fmt.Sprintf("could not update sent announceId '%s'", *patch.Id)
 					log.Warnf(errorString)
 					c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -1697,7 +1687,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 									"userId"=$4,
 									"updatedBy"=$5,
 									"updatedAt"=$6 WHERE "id"=$7`
-				for retry := 0; retry < RETRY_COUNT; retry++ {
+				for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 					_, err = s.postgresDB.Exec(updateStmt,
 						room.announcements[id].message,
 						room.announcements[id].relativeFrom,
@@ -1709,7 +1699,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 					if err == nil {
 						break
 					}
-					time.Sleep(RETRY_DELAY)
+					time.Sleep(constants.RETRY_DELAY)
 				}
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
@@ -1725,30 +1715,30 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		}
 
 		var announcement Announcement
-		announcement.status = ANNOUNCEMENT_QUEUED
+		announcement.status = constants.ANNOUNCEMENT_QUEUED
 		announcement.id = *patch.Id
 		if patch.Message == nil || *patch.Message == "" {
-			log.Warnf(MISS_ANNOUNCE_MSG)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_MSG})
-			return errors.New(MISS_ANNOUNCE_MSG)
+			log.Warnf(constants.ErrMissAnnounceMsg.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceMsg.Error()})
+			return errors.New(constants.ErrMissAnnounceMsg.Error())
 		}
 		announcement.message = *patch.Message
 		if patch.RelativeFrom != nil &&
-			*patch.RelativeFrom != FROM_START &&
-			*patch.RelativeFrom != FROM_END {
-			log.Warnf(MISS_ANNOUNCE_REL)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_REL})
-			return errors.New(MISS_ANNOUNCE_REL)
+			*patch.RelativeFrom != constants.FROM_START &&
+			*patch.RelativeFrom != constants.FROM_END {
+			log.Warnf(constants.ErrMissAnnounceRel.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceRel.Error()})
+			return errors.New(constants.ErrMissAnnounceRel.Error())
 		}
 		if patch.RelativeFrom == nil {
-			announcement.relativeFrom = FROM_END
+			announcement.relativeFrom = constants.FROM_END
 		} else {
 			announcement.relativeFrom = *patch.RelativeFrom
 		}
 		if patch.RelativeTimeInSeconds == nil {
-			log.Warnf(MISS_ANNOUNCE_TIME)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_TIME})
-			return errors.New(MISS_ANNOUNCE_TIME)
+			log.Warnf(constants.ErrMissAnnounceTime.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceTime.Error()})
+			return errors.New(constants.ErrMissAnnounceTime.Error())
 		}
 		announcement.relativeTimeInSeconds = *patch.RelativeTimeInSeconds
 		announcement.userId = make(pq.StringArray, 0)
@@ -1772,7 +1762,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 																				"updatedAt" )
 						VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		var err error
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(insertStmt,
 				announcement.id,
 				room.id,
@@ -1788,10 +1778,10 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 			if err == nil {
 				break
 			}
-			if strings.Contains(err.Error(), DUP_PK) {
+			if strings.Contains(err.Error(), constants.DUP_PK) {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -1818,12 +1808,12 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 							"updatedAt"
 					FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 	var row *sql.Row
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, roomId)
 		if row.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if row.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
@@ -1844,7 +1834,7 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 		&getRoom.UpdatedBy,
 		&getRoom.UpdatedAt)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			errorString := s.roomNotFound(roomId)
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -1868,12 +1858,12 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 						"updatedAt"
 					FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "roomId"=$1`
 	var announcements *sql.Rows
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		announcements, err = s.postgresDB.Query(queryStmt, roomId)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		errorString := fmt.Sprintf("could not query database: %s", err)
@@ -1902,7 +1892,7 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 		getRoom.Announcements = append(getRoom.Announcements, getAnnouncement)
 	}
 
-	if getRoom.Status == ROOM_STARTED {
+	if getRoom.Status == constants.ROOM_STARTED {
 		getRoom.Users = append(getRoom.Users, s.getPeers(getRoom.Id)...)
 	}
 	return getRoom, nil
@@ -1922,12 +1912,12 @@ func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
 							"updatedAt"
 					FROM "` + s.roomMgmtSchema + `"."room" WHERE "id"=$1`
 	var rows *sql.Row
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		rows = s.postgresDB.QueryRow(queryStmt, roomId)
 		if rows.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if rows.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", rows.Err())
@@ -1963,12 +1953,12 @@ func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
 						"updatedAt"
 					FROM "` + s.roomMgmtSchema + `"."announcement" WHERE "roomId"=$1`
 	var announcements *sql.Rows
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		announcements, err = s.postgresDB.Query(queryStmt, roomId)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		return Room{}, err
@@ -2002,12 +1992,12 @@ func (s *RoomMgmtService) queryRoomRecord(roomId string) (RoomRecord, error) {
 							"endTime"
 					FROM "` + s.roomRecordSchema + `"."room" WHERE "id"=$1`
 	var row *sql.Row
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, roomId)
 		if row.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if row.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
@@ -2028,12 +2018,12 @@ func (s *RoomMgmtService) queryRoomRecord(roomId string) (RoomRecord, error) {
 func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) error {
 	queryStmt := `SELECT "roomId" FROM "` + s.roomMgmtSchema + `"."playback" WHERE "id"=$1`
 	var row *sql.Row
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, playbackId)
 		if row.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if row.Err() != nil {
 		errorString := fmt.Sprintf("could not query database: %s", row.Err())
@@ -2044,7 +2034,7 @@ func (s *RoomMgmtService) queryPlayback(playbackId string, c *gin.Context) error
 	var roomId string
 	err := row.Scan(&roomId)
 	if err != nil {
-		if strings.Contains(err.Error(), NOT_FOUND_PK) {
+		if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 			errorString := s.roomNotFound(playbackId)
 			log.Warnf(errorString)
 			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -2065,43 +2055,43 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 	idMap := make(map[string]int)
 	for _, patch := range patchRoom.Announcements {
 		if patch.Id == nil {
-			log.Warnf(MISS_ANNOUNCE_ID)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_ID})
-			return errors.New(MISS_ANNOUNCE_ID)
+			log.Warnf(constants.ErrMissAnnounceId.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceId.Error()})
+			return errors.New(constants.ErrMissAnnounceId.Error())
 		}
 		_, exist := idMap[*patch.Id]
 		if exist {
-			log.Warnf(DUP_ANNOUNCE_ID)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": DUP_ANNOUNCE_ID})
-			return errors.New(DUP_ANNOUNCE_ID)
+			log.Warnf(constants.ErrDuplicateAnnounceId.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrDuplicateAnnounceId.Error()})
+			return errors.New(constants.ErrDuplicateAnnounceId.Error())
 		}
 		idMap[*patch.Id] = 1
 
 		var announcement Announcement
-		announcement.status = ANNOUNCEMENT_QUEUED
+		announcement.status = constants.ANNOUNCEMENT_QUEUED
 		announcement.id = *patch.Id
 		if patch.Message == nil || *patch.Message == "" {
-			log.Warnf(MISS_ANNOUNCE_MSG)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_MSG})
-			return errors.New(MISS_ANNOUNCE_MSG)
+			log.Warnf(constants.ErrMissAnnounceMsg.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceMsg.Error()})
+			return errors.New(constants.ErrMissAnnounceMsg.Error())
 		}
 		announcement.message = *patch.Message
 		if patch.RelativeFrom != nil &&
-			*patch.RelativeFrom != FROM_START &&
-			*patch.RelativeFrom != FROM_END {
-			log.Warnf(MISS_ANNOUNCE_REL)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_REL})
-			return errors.New(MISS_ANNOUNCE_REL)
+			*patch.RelativeFrom != constants.FROM_START &&
+			*patch.RelativeFrom != constants.FROM_END {
+			log.Warnf(constants.ErrMissAnnounceRel.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceRel.Error()})
+			return errors.New(constants.ErrMissAnnounceRel.Error())
 		}
 		if patch.RelativeFrom == nil {
-			announcement.relativeFrom = FROM_END
+			announcement.relativeFrom = constants.FROM_END
 		} else {
 			announcement.relativeFrom = *patch.RelativeFrom
 		}
 		if patch.RelativeTimeInSeconds == nil {
-			log.Warnf(MISS_ANNOUNCE_TIME)
-			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": MISS_ANNOUNCE_TIME})
-			return errors.New(MISS_ANNOUNCE_TIME)
+			log.Warnf(constants.ErrMissAnnounceTime.Error())
+			c.JSON(http.StatusBadRequest, map[string]interface{}{"error": constants.ErrMissAnnounceTime.Error()})
+			return errors.New(constants.ErrMissAnnounceTime.Error())
 		}
 		announcement.relativeTimeInSeconds = *patch.RelativeTimeInSeconds
 		announcement.createdBy = room.updatedBy
@@ -2115,7 +2105,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 		for id := range room.announcements {
 			if room.announcements[id].id == *patch.Id {
 				isPatched = true
-				if room.announcements[id].status == ANNOUNCEMENT_SENT {
+				if room.announcements[id].status == constants.ANNOUNCEMENT_SENT {
 					errorString := fmt.Sprintf("could not update already announced announceId '%s'", *patch.Id)
 					log.Warnf(errorString)
 					c.JSON(http.StatusBadRequest, map[string]interface{}{"error": errorString})
@@ -2130,7 +2120,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 									"updatedBy"=$5,
 									"updatedAt"=$6 WHERE "id"=$7`
 				var err error
-				for retry := 0; retry < RETRY_COUNT; retry++ {
+				for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 					_, err = s.postgresDB.Exec(updateStmt,
 						room.announcements[id].message,
 						room.announcements[id].relativeFrom,
@@ -2142,7 +2132,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 					if err == nil {
 						break
 					}
-					time.Sleep(RETRY_DELAY)
+					time.Sleep(constants.RETRY_DELAY)
 				}
 				if err != nil {
 					errorString := fmt.Sprintf("could not update database: %s", err)
@@ -2172,7 +2162,7 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 																				"updatedAt" )
 						VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 		var err error
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			_, err = s.postgresDB.Exec(insertStmt,
 				announcement.id,
 				room.id,
@@ -2188,10 +2178,10 @@ func (s *RoomMgmtService) putAnnouncement(room *Room, patchRoom PatchRoom, c *gi
 			if err == nil {
 				break
 			}
-			if strings.Contains(err.Error(), DUP_PK) {
+			if strings.Contains(err.Error(), constants.DUP_PK) {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			errorString := fmt.Sprintf("could not insert into database: %s", err)
@@ -2254,7 +2244,7 @@ func (s *RoomMgmtService) kickUser(roomId, userId string) (error, error) {
 		if userId == peer.Uid {
 			err := roomService.RemovePeer(roomId, peer.Uid)
 			if err != nil {
-				output := fmt.Sprintf("Error kicking '%s' from room '%s' : %v", userId, roomId, err)
+				output := fmt.Sprintf("Error kicking '%s' from room '%s' : %s", userId, roomId, err)
 				log.Errorf(output)
 				return nil, errors.New(output)
 			}
@@ -2364,13 +2354,20 @@ func testRedisConnection(config Config) error {
 
 func (s *RoomMgmtService) natsPublish(topic string, data []byte) error {
 	log.Infof("publishing to topic '%s'", topic)
-	resp, err := s.natsConn.Request(topic, data, RETRY_DELAY)
+	var resp *nats.Msg
+	var err error
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
+		resp, err = s.natsConn.Request(topic, data, constants.RETRY_DELAY)
+		if err == nil && string(resp.Data) == "" {
+			break
+		}
+	}
 	if err != nil {
-		log.Errorf("error publishing topic '%': %v", topic, err)
+		log.Errorf("error publishing topic '%s': %s", topic, err)
 		return err
 	}
 	if string(resp.Data) != "" {
-		log.Errorf("error publishing topic '%': %v", topic, string(resp.Data))
+		log.Errorf("error publishing topic '%s': %s", topic, string(resp.Data))
 		return errors.New(string(resp.Data))
 	}
 	return nil

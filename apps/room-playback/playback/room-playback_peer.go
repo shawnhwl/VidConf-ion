@@ -16,6 +16,7 @@ import (
 	minio "github.com/minio/minio-go/v7"
 	log "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
+	constants "github.com/pion/ion/apps/constants"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -50,6 +51,7 @@ type PlaybackPeer struct {
 	minioClient *minio.Client
 	bucketName  string
 
+	sessionCh      chan struct{}
 	roomId         string
 	sessionId      string
 	peerId         string
@@ -73,7 +75,7 @@ type PlaybackPeer struct {
 	ctrlCh chan Ctrl
 }
 
-func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName, orphanRemoteId string) *PlaybackPeer {
+func (s *RoomPlaybackSession) NewPlaybackPeer(peerId, peerName, orphanRemoteId string) *PlaybackPeer {
 	p := &PlaybackPeer{
 		conf:     s.conf,
 		waitPeer: s.waitPeer,
@@ -85,6 +87,7 @@ func (s *RoomPlaybackService) NewPlaybackPeer(peerId, peerName, orphanRemoteId s
 		minioClient: s.minioClient,
 		bucketName:  s.bucketName,
 
+		sessionCh:      s.sessionCh,
 		roomId:         s.roomId,
 		sessionId:      s.sessionId,
 		peerId:         peerId,
@@ -134,12 +137,12 @@ func (p *PlaybackPeer) preparePlaybackPeer() error {
 	queryStmt := `SELECT "trackRemoteIds"
 					FROM "` + p.roomRecordSchema + `"."trackEvent"
 					WHERE "roomId"=$1 AND "peerId"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		trackEventRow = p.postgresDB.QueryRow(queryStmt, p.roomId, p.peerId)
 		if trackEventRow.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if trackEventRow.Err() != nil {
 		log.Errorf("could not query database: %s", trackEventRow.Err())
@@ -157,12 +160,12 @@ func (p *PlaybackPeer) preparePlaybackPeer() error {
 		queryStmt = `SELECT "id", "mimeType"
 						FROM "` + p.roomRecordSchema + `"."track"
 						WHERE "roomId"=$1 AND "trackRemoteId"=$2`
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			trackRow = p.postgresDB.QueryRow(queryStmt, p.roomId, trackRemoteId)
 			if trackRow.Err() == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if trackRow.Err() != nil {
 			log.Errorf("could not query database")
@@ -180,14 +183,14 @@ func (p *PlaybackPeer) preparePlaybackPeer() error {
 		queryStmt = `SELECT "filePath"
 						FROM "` + p.roomRecordSchema + `"."trackStream"
 						WHERE "roomId"=$1 AND "trackId"=$2`
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			trackStreamRows, err = p.postgresDB.Query(queryStmt,
 				p.roomId,
 				trackId)
 			if err == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			log.Errorf("could not query database: %s", err)
@@ -235,10 +238,10 @@ func (p *PlaybackPeer) preparePlaybackPeer() error {
 			log.Errorf("error creating TrackLocal: %s", err)
 			continue
 		}
-		if strings.Contains(strings.ToUpper(mimeType), MIME_AUDIO) {
-			p.trackLocals[MIME_VP8], err = webrtc.NewTrackLocalStaticRTP(
-				webrtc.RTPCodecCapability{MimeType: MIME_VP8},
-				MIME_VP8+sdk.RandomKey(8),
+		if strings.Contains(strings.ToUpper(mimeType), constants.MIME_AUDIO) {
+			p.trackLocals[constants.MIME_VP8], err = webrtc.NewTrackLocalStaticRTP(
+				webrtc.RTPCodecCapability{MimeType: constants.MIME_VP8},
+				constants.MIME_VP8+sdk.RandomKey(8),
 				p.peerId)
 			if err != nil {
 				log.Errorf("error creating TrackLocal: %s", err)
@@ -266,12 +269,12 @@ func (p *PlaybackPeer) preparePlaybackOrphan() error {
 	queryStmt := `SELECT "id", "mimeType"
 						FROM "` + p.roomRecordSchema + `"."track"
 						WHERE "roomId"=$1 AND "trackRemoteId"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		trackRow = p.postgresDB.QueryRow(queryStmt, p.roomId, p.orphanRemoteId)
 		if trackRow.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if trackRow.Err() != nil {
 		log.Errorf("could not query database: %s", trackRow.Err())
@@ -285,8 +288,8 @@ func (p *PlaybackPeer) preparePlaybackOrphan() error {
 		return err
 	}
 	codecMimeType := strings.ToUpper(mimeType)
-	if !strings.Contains(codecMimeType, MIME_VIDEO) {
-		log.Errorf("orphaned remoteTrackId '%' is not screen share", p.orphanRemoteId)
+	if !strings.Contains(codecMimeType, constants.MIME_VIDEO) {
+		log.Errorf("orphaned remoteTrackId '%s' is not screen share", p.orphanRemoteId)
 		return errors.New("orphaned remoteTrackId is not screen share")
 	}
 
@@ -294,14 +297,14 @@ func (p *PlaybackPeer) preparePlaybackOrphan() error {
 	queryStmt = `SELECT "filePath"
 						FROM "` + p.roomRecordSchema + `"."trackStream"
 						WHERE "roomId"=$1 AND "trackId"=$2`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		trackStreamRows, err = p.postgresDB.Query(queryStmt,
 			p.roomId,
 			trackId)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not query database: %s", err)
@@ -361,6 +364,8 @@ func (p *PlaybackPeer) start() {
 	p.joinRoomCh <- struct{}{}
 	for {
 		select {
+		case <-p.sessionCh:
+			return
 		case ctrl := <-p.ctrlCh:
 			for id := range p.trackCh {
 				p.trackCh[id] <- ctrl
@@ -382,10 +387,10 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 	isAudioCodec := false
 	isVideoCodec := false
 	isScreenShare := false
-	if strings.Contains(codecMimeType, MIME_AUDIO) {
+	if strings.Contains(codecMimeType, constants.MIME_AUDIO) {
 		isAudioCodec = true
 	}
-	if strings.Contains(codecMimeType, MIME_VIDEO) {
+	if strings.Contains(codecMimeType, constants.MIME_VIDEO) {
 		if p.orphanRemoteId != "" {
 			isScreenShare = true
 		} else {
@@ -403,7 +408,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 	trackIdx := 0
 	maxTrackIdx := p.lenTrackStreams[key]
 	trackStreams := p.trackStreams[key]
-	trackInfo := PLAYBACK_PREFIX + p.peerName
+	trackInfo := constants.PLAYBACK_PREFIX + p.peerName
 	if p.orphanRemoteId != "" {
 		trackInfo = "orphanId"
 	}
@@ -461,7 +466,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 				isRunning,
 				ctrl.isAudio,
 				ctrl.isVideo,
-				speed10, PLAYBACK_SPEED10,
+				speed10, constants.PLAYBACK_SPEED10,
 				playbackRefTime,
 				actualRefTime,
 				trackIdx, maxTrackIdx,
@@ -475,7 +480,7 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 				continue
 			}
 			if speed10*time.Since(actualRefTime) <
-				PLAYBACK_SPEED10*trackStreams[trackIdx].Timestamp.Sub(playbackRefTime) {
+				constants.PLAYBACK_SPEED10*trackStreams[trackIdx].Timestamp.Sub(playbackRefTime) {
 				continue
 			}
 			if !isPublishing {
@@ -497,7 +502,6 @@ func (p *PlaybackPeer) sendTrack(key string, trackCh chan Ctrl) {
 
 func (p *PlaybackPeer) publishTrackLocal(trackInfo, key string, needDummy bool) error {
 	if !p.isRoomJoined {
-		log.Errorf("room is not joined")
 		return errors.New("room is not joined")
 	}
 
@@ -507,7 +511,7 @@ func (p *PlaybackPeer) publishTrackLocal(trackInfo, key string, needDummy bool) 
 		return err
 	}
 	if needDummy {
-		_, err = p.roomRTC.Publish(p.trackLocals[MIME_VP8])
+		_, err = p.roomRTC.Publish(p.trackLocals[constants.MIME_VP8])
 		if err != nil {
 			log.Errorf("error publishing %s", err)
 			return err
@@ -537,7 +541,7 @@ func (p *PlaybackPeer) openRoom() {
 			p.isSdkConnected = true
 			break
 		}
-		time.Sleep(RECONNECTION_INTERVAL)
+		time.Sleep(constants.RECONNECTION_INTERVAL)
 	}
 	p.joinRoom()
 }
@@ -557,8 +561,8 @@ func (p *PlaybackPeer) joinRoom() {
 	err = p.roomService.Join(
 		sdk.JoinInfo{
 			Sid:         p.sessionId,
-			Uid:         PLAYBACK_PREFIX + p.peerId,
-			DisplayName: PLAYBACK_PREFIX + p.peerName,
+			Uid:         constants.PLAYBACK_PREFIX + p.peerId,
+			DisplayName: constants.PLAYBACK_PREFIX + p.peerName,
 		},
 	)
 	if err != nil {
@@ -566,11 +570,11 @@ func (p *PlaybackPeer) joinRoom() {
 		return
 	}
 
-	log.Infof("room.Join ok roomid=%v", p.roomId)
+	log.Infof("room.Join ok sessionId=%s", p.sessionId)
 }
 
 func (p *PlaybackPeer) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
-	log.Infof("onRoomJoin success = %v, info = %v, err = %v", success, info, err)
+	log.Infof("onRoomJoin success = %v, info = %v, err = %s", success, info, err)
 
 	p.roomRTC.OnTrack = p.onRTCTrack
 	p.roomRTC.OnDataChannel = p.onRTCDataChannel
@@ -578,13 +582,13 @@ func (p *PlaybackPeer) onRoomJoin(success bool, info sdk.RoomInfo, err error) {
 	p.roomRTC.OnTrackEvent = p.onRTCTrackEvent
 	p.roomRTC.OnSpeaker = p.onRTCSpeaker
 
-	err = p.roomRTC.Join(p.sessionId, PLAYBACK_PREFIX+p.peerId)
+	err = p.roomRTC.Join(p.sessionId, constants.PLAYBACK_PREFIX+p.peerId)
 	if err != nil {
 		p.joinRoomCh <- struct{}{}
 		return
 	}
 	p.isRoomJoined = true
-	log.Infof("rtc.Join ok roomid=%v", p.roomId)
+	log.Infof("rtc.Join ok sessionId=%s", p.sessionId)
 }
 
 func (p *PlaybackPeer) onRTCTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
@@ -610,7 +614,7 @@ func (p *PlaybackPeer) onRoomDisconnect(sid, reason string) {
 }
 
 func (p *PlaybackPeer) onRoomError(err error) {
-	log.Errorf("onRoomError %v", err)
+	log.Errorf("onRoomError %s", err)
 	p.joinRoomCh <- struct{}{}
 }
 

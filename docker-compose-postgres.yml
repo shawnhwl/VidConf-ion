@@ -9,15 +9,11 @@ services:
       POSTGRES_USER: vidconfAdmin
       POSTGRES_PASSWORD: vidconfPass
       POSTGRES_DB: vidconf
-    networks:
-      - ionnet
 
   adminer:
     image: adminer
     ports:
       - 8080:8080
-    networks:
-      - ionnet
 
   minio:
     image: quay.io/minio/minio
@@ -27,10 +23,3 @@ services:
     ports:
       - 9000:9000
       - 9001:9001
-    networks:
-      - ionnet
-
-networks:
-  ionnet:
-    name: ionnet
-    driver: bridge

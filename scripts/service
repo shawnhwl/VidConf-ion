@@ -16,7 +16,7 @@ SERVICE=$2
 show_help()
 {
     echo ""
-    echo "Usage: ./service {start|stop|status} {app-room-sentry|app-room-mgmt|app-room|signal|islb|sfu}"
+    echo "Usage: ./service {start|stop|status} {app-room-recorder|app-room-playback|app-room-mgmt|app-room|signal|islb|sfu}"
     echo ""
 }
 
@@ -54,6 +54,13 @@ function start()
     if [[ "$SERVICE" == app-room-sentry ]]; then
         BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
     fi
+    if [[ "$SERVICE" == app-room-recorder ]]; then
+        BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
+    fi
+    if [[ "$SERVICE" == app-room-playback ]]; then
+        BUILD_PATH=$APP_DIR/apps/${SERVICE:4}
+    fi
+
     cd $BUILD_PATH
     echo "go build -o $COMMAND"
     go build -o $COMMAND
@@ -104,6 +111,12 @@ function status() {
     if [[ "$SERVICE" == "" ]]; then
         exit 1
     fi
+    if [[ "$SERVICE" == app-room-recorder ]]; then
+        SERVICE=${SERVICE:0:15}
+    fi
+    if [[ "$SERVICE" == app-room-playback ]]; then
+        SERVICE=${SERVICE:0:15}
+    fi
     if [ `pgrep -x $SERVICE` ]; then
         echo -e "\033[32m[OK]\033[0m: $SERVICE is running"
     else
@@ -117,7 +130,7 @@ if [[ "$ACTION" != "start" && "$ACTION" != "stop" && "$ACTION" != "status" && "$
     exit 1
 fi
 
-if [[ "$SERVICE" != "app-room-sentry" && "$SERVICE" != "app-room-mgmt" && "$SERVICE" != "app-room" && "$SERVICE" != "signal" && "$SERVICE" != "islb" && "$SERVICE" != "sfu" ]]; then
+if [[ "$SERVICE" != "app-room-recorder" && "$SERVICE" != "app-room-playback" && "$SERVICE" != "app-room-sentry" && "$SERVICE" != "app-room-mgmt" && "$SERVICE" != "app-room" && "$SERVICE" != "signal" && "$SERVICE" != "islb" && "$SERVICE" != "sfu" ]]; then
     show_help
     exit 1
 fi

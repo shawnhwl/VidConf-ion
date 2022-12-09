@@ -19,6 +19,7 @@ import (
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 
+	constants "github.com/pion/ion/apps/constants"
 	minioService "github.com/pion/ion/apps/minio"
 	postgresService "github.com/pion/ion/apps/postgres"
 	room "github.com/pion/ion/apps/room/proto"
@@ -475,7 +476,7 @@ func (r *Room) insertPeerEvent(peerEvent PeerEvent) {
 					"peerName")
 					VALUES($1, $2, $3, $4, $5, $6)`
 	dbId := uuid.NewString()
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = r.postgresDB.Exec(insertStmt,
 			dbId,
 			r.sid,
@@ -486,10 +487,10 @@ func (r *Room) insertPeerEvent(peerEvent PeerEvent) {
 		if err == nil {
 			break
 		}
-		if strings.Contains(err.Error(), DUP_PK) {
+		if strings.Contains(err.Error(), constants.DUP_PK) {
 			dbId = uuid.NewString()
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not insert into database: %s", err)
@@ -505,6 +506,7 @@ type ChatPayload struct {
 type Payload struct {
 	Uid              *string     `json:"uid,omitempty"`
 	Name             *string     `json:"name,omitempty"`
+	MimeType         *string     `json:"mimeType,omitempty"`
 	Text             *string     `json:"text,omitempty"`
 	Timestamp        *time.Time  `json:"timestamp,omitempty"`
 	Base64File       *Attachment `json:"base64File,omitempty"`
@@ -528,7 +530,7 @@ func (r *Room) insertChat(data []byte) {
 	var chatPayload ChatPayload
 	err = json.Unmarshal(data, &chatPayload)
 	if err != nil {
-		log.Errorf("error decoding chat message %s", err.Error())
+		log.Errorf("error decoding chat message %s", err)
 		return
 	}
 
@@ -556,6 +558,10 @@ func (r *Room) insertChat(data []byte) {
 	if chatPayload.Msg.Text == nil {
 		text := ""
 		chatPayload.Msg.Text = &text
+	}
+	if chatPayload.Msg.MimeType == nil {
+		mimeType := ""
+		chatPayload.Msg.MimeType = &mimeType
 	}
 
 	r.storeChat(chatPayload)
@@ -596,22 +602,24 @@ func (r *Room) storeChat(chatPayload ChatPayload) {
 					"id",
 					"roomId",
 					"timestamp",
+					"mimeType",
 					"userId",
 					"userName",
 					"text",
 					"fileName",
 					"fileSize",
 					"filePath")
-					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+					VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	objName := uuid.NewString()
 	if chatPayload.Msg.Base64File != nil {
-		filePath = ATTACHMENT_FOLDERNAME + objName
+		filePath = constants.ATTACHMENT_FOLDERNAME + objName
 	}
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = r.postgresDB.Exec(insertStmt,
 			objName,
 			r.sid,
 			*chatPayload.Msg.Timestamp,
+			*chatPayload.Msg.MimeType,
 			*chatPayload.Msg.Uid,
 			*chatPayload.Msg.Name,
 			*chatPayload.Msg.Text,
@@ -621,13 +629,13 @@ func (r *Room) storeChat(chatPayload ChatPayload) {
 		if err == nil {
 			break
 		}
-		if strings.Contains(err.Error(), DUP_PK) {
+		if strings.Contains(err.Error(), constants.DUP_PK) {
 			objName = uuid.NewString()
 			if chatPayload.Msg.Base64File != nil {
-				filePath = ATTACHMENT_FOLDERNAME + objName
+				filePath = constants.ATTACHMENT_FOLDERNAME + objName
 			}
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not insert into database: %s", err)
@@ -637,7 +645,7 @@ func (r *Room) storeChat(chatPayload ChatPayload) {
 	if chatPayload.Msg.Base64File != nil {
 		data := bytes.NewReader([]byte(*chatPayload.Msg.Base64File.Data))
 		var uploadInfo minio.UploadInfo
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			uploadInfo, err = r.minioClient.PutObject(context.Background(),
 				r.bucketName,
 				r.sid+filePath,
@@ -647,7 +655,7 @@ func (r *Room) storeChat(chatPayload ChatPayload) {
 			if err == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			log.Errorf("could not upload attachment: %s", err)

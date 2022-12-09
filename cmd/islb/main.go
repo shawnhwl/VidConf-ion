@@ -35,12 +35,12 @@ func load() bool {
 
 	err = viper.ReadInConfig()
 	if err != nil {
-		fmt.Printf("config file %s read failed. %v\n", file, err)
+		fmt.Printf("config file %s read failed. %s\n", file, err)
 		return false
 	}
 	err = viper.UnmarshalExact(&conf)
 	if err != nil {
-		fmt.Printf("config file %s loaded failed. %v\n", file, err)
+		fmt.Printf("config file %s loaded failed. %s\n", file, err)
 		return false
 	}
 	fmt.Printf("config %s load ok!\n", file)
@@ -74,7 +74,7 @@ func main() {
 	log.Infof("--- starting islb node ---")
 	node := islb.NewISLB()
 	if err := node.Start(conf); err != nil {
-		log.Errorf("islb start error: %v", err)
+		log.Errorf("islb start error: %s", err)
 		os.Exit(-1)
 	}
 	defer node.Close()

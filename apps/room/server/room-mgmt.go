@@ -8,18 +8,7 @@ import (
 
 	"github.com/lib/pq"
 	log "github.com/pion/ion-log"
-)
-
-const (
-	ROOM_BOOKED string = "Booked"
-	ROOM_ENDED  string = "Ended"
-
-	ATTACHMENT_FOLDERNAME string = "/attachment/"
-
-	RETRY_COUNT  int           = 3
-	RETRY_DELAY  time.Duration = 5 * time.Second
-	DUP_PK       string        = "duplicate key value violates unique constraint"
-	NOT_FOUND_PK string        = "no rows in result set"
+	constants "github.com/pion/ion/apps/constants"
 )
 
 type RoomBooking struct {
@@ -33,12 +22,12 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 	if strings.HasPrefix(roomId, s.rs.playbackIdPrefix) {
 		queryStmt := `SELECT "name" FROM "` + s.rs.roomMgmtSchema + `"."playback" WHERE "id"=$1`
 		var row *sql.Row
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			row = s.rs.postgresDB.QueryRow(queryStmt, roomId)
 			if row.Err() == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if row.Err() != nil {
 			log.Errorf("could not query database")
@@ -46,7 +35,7 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 		}
 		err := row.Scan(&booking.name)
 		if err != nil {
-			if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 				return "", errors.New(roomNotFound(roomId))
 			} else {
 				return "", err
@@ -60,12 +49,12 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 								"allowedUserId"
 						FROM "` + s.rs.roomMgmtSchema + `"."room" WHERE "id"=$1`
 		var row *sql.Row
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			row = s.rs.postgresDB.QueryRow(queryStmt, roomId)
 			if row.Err() == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if row.Err() != nil {
 			log.Errorf("could not query database")
@@ -75,18 +64,18 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 			&booking.status,
 			&booking.allowedUserId)
 		if err != nil {
-			if strings.Contains(err.Error(), NOT_FOUND_PK) {
+			if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 				return "", errors.New(roomNotFound(roomId))
 			} else {
 				return "", err
 			}
 		}
 	}
-	if booking.status == ROOM_BOOKED {
+	if booking.status == constants.ROOM_BOOKED {
 		log.Warnf(roomNotStarted(roomId))
 		return "", errors.New(roomNotStarted(roomId))
 	}
-	if booking.status == ROOM_ENDED {
+	if booking.status == constants.ROOM_ENDED {
 		log.Warnf(roomEnded(roomId))
 		return "", errors.New(roomEnded(roomId))
 	}

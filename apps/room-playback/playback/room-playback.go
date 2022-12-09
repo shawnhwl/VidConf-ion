@@ -3,27 +3,19 @@ package playback
 import (
 	"os"
 
-	natsDiscoveryClient "github.com/cloudwebrtc/nats-discovery/pkg/client"
-	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
-	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
-	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	minioService "github.com/pion/ion/apps/minio"
 	postgresService "github.com/pion/ion/apps/postgres"
-	"github.com/pion/ion/pkg/ion"
-	"github.com/pion/ion/pkg/proto"
-	"github.com/pion/ion/pkg/runner"
 	"github.com/pion/ion/pkg/util"
 	"github.com/spf13/viper"
-	"google.golang.org/grpc/reflection"
 )
-
-type GlobalConf struct {
-	Dc string `mapstructure:"dc"`
-}
 
 type LogConf struct {
 	Level string `mapstructure:"level"`
+}
+
+type StunConf struct {
+	Urls []string `mapstructure:"urls"`
 }
 
 type NatsConf struct {
@@ -35,7 +27,6 @@ type SignalConf struct {
 }
 
 type RoomMgmtConf struct {
-	SessionId          string `mapstructure:"sessionId"`
 	SystemUserIdPrefix string `mapstructure:"systemUserIdPrefix"`
 	SystemUsername     string `mapstructure:"systemUsername"`
 	PlaybackIdPrefix   string `mapstructure:"playbackIdPrefix"`
@@ -47,14 +38,14 @@ type PlaybackConf struct {
 }
 
 type Config struct {
-	Global   GlobalConf                   `mapstructure:"global"`
-	Log      LogConf                      `mapstructure:"log"`
-	Nats     NatsConf                     `mapstructure:"nats"`
-	Postgres postgresService.PostgresConf `mapstructure:"postgres"`
-	Minio    minioService.MinioConf       `mapstructure:"minio"`
-	Signal   SignalConf                   `mapstructure:"signal"`
-	RoomMgmt RoomMgmtConf                 `mapstructure:"roommgmt"`
-	Playback PlaybackConf                 `mapstructure:"playback"`
+	Log        LogConf                      `mapstructure:"log"`
+	Stunserver StunConf                     `mapstructure:"stunserver"`
+	Nats       NatsConf                     `mapstructure:"nats"`
+	Postgres   postgresService.PostgresConf `mapstructure:"postgres"`
+	Minio      minioService.MinioConf       `mapstructure:"minio"`
+	Signal     SignalConf                   `mapstructure:"signal"`
+	RoomMgmt   RoomMgmtConf                 `mapstructure:"roommgmt"`
+	Playback   PlaybackConf                 `mapstructure:"playback"`
 }
 
 func unmarshal(rawVal interface{}) error {
@@ -75,7 +66,7 @@ func (c *Config) Load(file string) error {
 
 	err = viper.ReadInConfig()
 	if err != nil {
-		log.Errorf("config file %s read failed. %v\n", file, err)
+		log.Errorf("config file %s read failed. %s\n", file, err)
 		return err
 	}
 
@@ -84,7 +75,7 @@ func (c *Config) Load(file string) error {
 		return err
 	}
 	if err != nil {
-		log.Errorf("config file %s loaded failed. %v\n", file, err)
+		log.Errorf("config file %s loaded failed. %s\n", file, err)
 		return err
 	}
 
@@ -92,83 +83,29 @@ func (c *Config) Load(file string) error {
 	return nil
 }
 
-// RoomPlayback represents a room-playback node
+// RoomPlayback represents a room-playback instance
 type RoomPlayback struct {
-	// for standalone running
-	runner.Service
-
 	// HTTP room-playback service
 	RoomPlaybackService
-
-	// for distributed node running
-	ion.Node
-	natsConn         *nats.Conn
-	natsDiscoveryCli *natsDiscoveryClient.Client
 }
 
 // New create a RoomPlayback node instance
 func New() *RoomPlayback {
-	api := &RoomPlayback{
-		Node: ion.NewNode("room-playback-" + util.RandomString(6)),
-	}
-	return api
+	return &RoomPlayback{}
 }
 
 // Start RoomPlayback node
-func (r *RoomPlayback) Start(conf Config, quitCh chan os.Signal) error {
+func (r *RoomPlayback) Start(conf Config) error {
 	var err error
 
 	log.Infof("conf.Nats.URL===%+v", conf.Nats.URL)
-	err = r.Node.Start(conf.Nats.URL)
+	natsConn, err := util.NewNatsConn(conf.Nats.URL)
 	if err != nil {
-		r.Close()
+		log.Errorf("new nats conn error %s", err)
 		return err
 	}
 
-	ndc, err := natsDiscoveryClient.NewClient(r.Node.NatsConn())
-	if err != nil {
-		log.Errorf("failed to create discovery client: %v", err)
-		ndc.Close()
-		return err
-	}
-
-	r.natsDiscoveryCli = ndc
-	r.natsConn = r.Node.NatsConn()
-	r.RoomPlaybackService = *NewRoomPlaybackService(conf, r.natsConn, quitCh)
-
-	// Register reflection service on nats-rpc server.
-	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))
-
-	node := discovery.Node{
-		DC:      conf.Global.Dc,
-		Service: proto.ServiceROOMPLAYBACK,
-		NID:     r.Node.NID,
-		RPC: discovery.RPC{
-			Protocol: discovery.NGRPC,
-			Addr:     conf.Nats.URL,
-			//Params:   map[string]string{"username": "foo", "password": "bar"},
-		},
-	}
-
-	go func() {
-		err := r.Node.KeepAlive(node)
-		if err != nil {
-			log.Errorf("sfu.Node.KeepAlive(%v) error %v", r.Node.NID, err)
-		}
-	}()
-
-	//Watch ALL nodes.
-	go func() {
-		err := r.Node.Watch(proto.ServiceALL)
-		if err != nil {
-			log.Errorf("Node.Watch(proto.ServiceALL) error %v", err)
-		}
-	}()
+	r.RoomPlaybackService = *NewRoomPlaybackService(conf, natsConn)
 
 	return nil
-}
-
-// Close all
-func (s *RoomPlayback) Close() {
-	s.Node.Close()
 }

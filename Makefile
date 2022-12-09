@@ -32,7 +32,7 @@ scripts-stop-services:
 
 docker-start-services:
 	docker-compose pull
-	docker-compose -f docker-compose.yml up --force-recreate --remove-orphans
+	docker-compose -f docker-compose.yml up --force-recreate --remove-orphans -d
 
 docker-stop-services:
 	docker-compose -f docker-compose.yml down

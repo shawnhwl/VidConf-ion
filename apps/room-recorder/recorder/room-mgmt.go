@@ -2,52 +2,52 @@ package recorder
 
 import (
 	"database/sql"
-	"os"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	log "github.com/pion/ion-log"
+	constants "github.com/pion/ion/apps/constants"
 )
 
-const (
-	ROOM_BOOKED string = "Booked"
-	ROOM_ENDED  string = "Ended"
-
-	RETRY_COUNT  int           = 3
-	RETRY_DELAY  time.Duration = 5 * time.Second
-	DUP_PK       string        = "duplicate key value violates unique constraint"
-	NOT_FOUND_PK string        = "no rows in result set"
-)
-
-func (s *RoomRecorderService) getRoomsByRoomid() {
-	queryStmt := `SELECT "startTime" FROM "` + s.roomRecordSchema + `"."room" WHERE "id"=$1`
+func (s *RoomRecorderSession) getRoomsByRoomid() error {
+	queryStmt := `SELECT 	"startTime",
+							"endTime"
+					FROM "` + s.roomRecordSchema + `"."room" WHERE "id"=$1`
 	var row *sql.Row
 	var err error
-	for retry := 0; retry < RETRY_COUNT*RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT*constants.RETRY_COUNT; retry++ {
 		row = s.postgresDB.QueryRow(queryStmt, s.sessionId)
 		if row.Err() == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if row.Err() != nil {
-		log.Errorf("could not query database")
-		os.Exit(1)
+		errorString := "could not query database"
+		log.Errorf(errorString)
+		return errors.New(errorString)
 	} else {
 		var startTime time.Time
-		err = row.Scan(&startTime)
+		var endTime time.Time
+		err = row.Scan(&startTime, &endTime)
 		if err != nil {
-			if strings.Contains(err.Error(), NOT_FOUND_PK) {
-				log.Errorf(roomNotFound(s.sessionId))
-				os.Exit(1)
+			if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
+				errorString := "roomId '" + s.sessionId + "' not found in database"
+				log.Errorf(errorString)
+				return errors.New(errorString)
 			} else {
-				log.Errorf("could not query database")
-				os.Exit(1)
+				errorString := fmt.Sprintf("could not query database: %s", err)
+				log.Errorf(errorString)
+				return errors.New(errorString)
 			}
 		}
+		if endTime.After(startTime) {
+			errorString := "roomId '" + s.sessionId + "' has ended"
+			log.Warnf(errorString)
+			return errors.New(errorString)
+		}
 	}
-}
-
-func roomNotFound(roomId string) string {
-	return "RoomId '" + roomId + "' not found in database"
+	return nil
 }

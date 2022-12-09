@@ -1,7 +1,8 @@
-package server
+package sentry
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"os"
 	"time"
@@ -10,27 +11,8 @@ import (
 	"github.com/lib/pq"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
+	constants "github.com/pion/ion/apps/constants"
 	postgresService "github.com/pion/ion/apps/postgres"
-)
-
-const (
-	UPDATEROOM_TOPIC     string = "roomUpdates."
-	CREATEPLAYBACK_TOPIC string = "playbackCreate."
-	DELETEPLAYBACK_TOPIC string = "playbackDelete."
-
-	NOT_READY         string = "service is not yet ready"
-	ANNOUNCEMENT_SENT string = "Sent"
-	ROOM_BOOKED       string = "Booked"
-	ROOM_STARTED      string = "Started"
-	ROOM_ENDED        string = "Ended"
-	FROM_END          string = "end"
-
-	NOT_FOUND_PK string = "no rows in result set"
-
-	RETRY_COUNT int           = 3
-	RETRY_DELAY time.Duration = 5 * time.Second
-
-	RECONNECTION_INTERVAL time.Duration = 10 * time.Second
 )
 
 type StartRooms struct {
@@ -59,9 +41,7 @@ type RoomSentryService struct {
 	conf     Config
 	natsConn *nats.Conn
 
-	onRoomUpdatesCh    chan string
-	onPlaybackCreateCh chan string
-	onPlaybackDeleteCh chan string
+	onRoomUpdatesCh chan string
 
 	timeLive  string
 	timeReady string
@@ -91,17 +71,17 @@ func (s *RoomSentryService) getLiveness(c *gin.Context) {
 func (s *RoomSentryService) getReadiness(c *gin.Context) {
 	log.Infof("GET /readiness")
 	if s.timeReady == "" {
-		c.String(http.StatusInternalServerError, NOT_READY)
+		c.String(http.StatusInternalServerError, constants.ErrNotReady.Error())
 		return
 	}
 	c.String(http.StatusOK, "Ready since %s", s.timeReady)
 }
 
 func (s *RoomSentryService) onRoomUpdates(msg *nats.Msg) {
-	roomId := msg.Subject[len(UPDATEROOM_TOPIC):]
-	log.Infof("onSubcribe %s%s", UPDATEROOM_TOPIC, roomId)
+	roomId := msg.Subject[len(constants.UPDATEROOM_TOPIC):]
+	log.Infof("onSubcribe %s%s", constants.UPDATEROOM_TOPIC, roomId)
 	if s.timeReady == "" {
-		msg.Respond([]byte(NOT_READY))
+		msg.Respond([]byte(constants.ErrNotReady.Error()))
 		return
 	}
 
@@ -109,27 +89,20 @@ func (s *RoomSentryService) onRoomUpdates(msg *nats.Msg) {
 	msg.Respond([]byte(""))
 }
 
-func (s *RoomSentryService) onPlaybackCreate(msg *nats.Msg) {
-	playbackid := msg.Subject[len(CREATEPLAYBACK_TOPIC):]
-	log.Infof("onSubcribe %s%s", CREATEPLAYBACK_TOPIC, playbackid)
-	if s.timeReady == "" {
-		msg.Respond([]byte(NOT_READY))
-		return
-	}
-
-	s.onPlaybackCreateCh <- playbackid
-	msg.Respond([]byte(""))
-}
-
 func (s *RoomSentryService) onPlaybackDelete(msg *nats.Msg) {
-	playbackid := msg.Subject[len(DELETEPLAYBACK_TOPIC):]
-	log.Infof("onSubcribe %s%s", DELETEPLAYBACK_TOPIC, playbackid)
+	playbackId := msg.Subject[len(constants.DELETEPLAYBACK_TOPIC):]
+	log.Infof("onSubcribe %s%s", constants.DELETEPLAYBACK_TOPIC, playbackId)
 	if s.timeReady == "" {
-		msg.Respond([]byte(NOT_READY))
+		msg.Respond([]byte(constants.ErrNotReady.Error()))
 		return
 	}
 
-	s.onPlaybackDeleteCh <- playbackid
+	err := s.deletePlayback(playbackId)
+	if err != nil {
+		msg.Respond([]byte(err.Error()))
+		return
+	}
+
 	msg.Respond([]byte(""))
 }
 
@@ -141,9 +114,7 @@ func NewRoomMgmtSentryService(config Config, natsConn *nats.Conn) *RoomSentrySer
 		conf:     config,
 		natsConn: natsConn,
 
-		onRoomUpdatesCh:    make(chan string, 2048),
-		onPlaybackCreateCh: make(chan string, 2048),
-		onPlaybackDeleteCh: make(chan string, 2048),
+		onRoomUpdatesCh: make(chan string, 2048),
 
 		timeLive:  timeLive,
 		timeReady: "",
@@ -175,19 +146,13 @@ func NewRoomMgmtSentryService(config Config, natsConn *nats.Conn) *RoomSentrySer
 
 func (s *RoomSentryService) start() {
 	log.Infof("--- Starting NATS Subscription ---")
-	onRoomUpdatesSub, err := s.natsConn.Subscribe(UPDATEROOM_TOPIC+"*", s.onRoomUpdates)
+	onRoomUpdatesSub, err := s.natsConn.Subscribe(constants.UPDATEROOM_TOPIC+"*", s.onRoomUpdates)
 	if err != nil {
 		log.Errorf("NATS Subscription error: %s", err)
 		os.Exit(1)
 	}
 	defer onRoomUpdatesSub.Unsubscribe()
-	onPlaybackCreateSub, err := s.natsConn.Subscribe(CREATEPLAYBACK_TOPIC+"*", s.onPlaybackCreate)
-	if err != nil {
-		log.Errorf("NATS Subscription error: %s", err)
-		os.Exit(1)
-	}
-	defer onPlaybackCreateSub.Unsubscribe()
-	onPlaybackDeleteSub, err := s.natsConn.Subscribe(DELETEPLAYBACK_TOPIC+"*", s.onPlaybackDelete)
+	onPlaybackDeleteSub, err := s.natsConn.Subscribe(constants.DELETEPLAYBACK_TOPIC+"*", s.onPlaybackDelete)
 	if err != nil {
 		log.Errorf("NATS Subscription error: %s", err)
 		os.Exit(1)
@@ -206,4 +171,25 @@ func (s *RoomSentryService) start() {
 		log.Errorf("http listener error: %s", err)
 		os.Exit(1)
 	}
+}
+
+func (s *RoomSentryService) natsPublish(topic string, data []byte) error {
+	log.Infof("publishing to topic '%s'", topic)
+	var resp *nats.Msg
+	var err error
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
+		resp, err = s.natsConn.Request(topic, data, constants.RETRY_DELAY)
+		if err == nil && string(resp.Data) == "" {
+			break
+		}
+	}
+	if err != nil {
+		log.Errorf("error publishing topic '%s': %s", topic, err)
+		return err
+	}
+	if string(resp.Data) != "" {
+		log.Errorf("error publishing topic '%s': %s", topic, string(resp.Data))
+		return errors.New(string(resp.Data))
+	}
+	return nil
 }

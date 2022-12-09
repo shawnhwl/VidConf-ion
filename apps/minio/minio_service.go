@@ -12,11 +12,7 @@ import (
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	log "github.com/pion/ion-log"
-)
-
-const (
-	RETRY_COUNT int           = 3
-	RETRY_DELAY time.Duration = 5 * time.Second
+	constants "github.com/pion/ion/apps/constants"
 )
 
 type MinioConf struct {
@@ -35,7 +31,7 @@ func GetMinioClient(config MinioConf) *minio.Client {
 		Secure: config.UseSSL,
 	})
 	if err != nil {
-		log.Errorf("Unable to connect to filestore: %v\n", err)
+		log.Errorf("Unable to connect to filestore: %s\n", err)
 		os.Exit(1)
 	}
 	err = minioClient.MakeBucket(context.Background(),
@@ -45,7 +41,7 @@ func GetMinioClient(config MinioConf) *minio.Client {
 		exists, errBucketExists := minioClient.BucketExists(context.Background(),
 			config.BucketName)
 		if errBucketExists != nil || !exists {
-			log.Errorf("Unable to create bucket: %v\n", err)
+			log.Errorf("Unable to create bucket: %s\n", err)
 			os.Exit(1)
 		}
 	}
@@ -64,7 +60,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 	ptestString := &testString
 	testStringData := bytes.NewReader([]byte(*ptestString))
 	var err error
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = minioClient.PutObject(context.Background(),
 			config.BucketName,
 			"/test/testString",
@@ -74,7 +70,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not upload attachment: %s", err)
@@ -82,7 +78,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 	}
 
 	var object *minio.Object
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		object, err = minioClient.GetObject(context.Background(),
 			config.BucketName,
 			"/test/testString",
@@ -90,7 +86,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
 		log.Errorf("could not download attachment: %s", err)
@@ -133,7 +129,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 			os.Exit(1)
 		}
 
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			_, err = minioClient.PutObject(context.Background(),
 				config.BucketName,
 				"/test/testTrack"+strconv.Itoa(id),
@@ -143,7 +139,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 			if err == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			log.Errorf("could not upload file: %s", err)
@@ -153,7 +149,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 
 	recvTracks := make([]TestTrack, 0)
 	for id := 0; id < 100; id += 5 {
-		for retry := 0; retry < RETRY_COUNT; retry++ {
+		for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 			object, err = minioClient.GetObject(context.Background(),
 				config.BucketName,
 				"/test/testTrack"+strconv.Itoa(id),
@@ -161,7 +157,7 @@ func testMinioClient(minioClient *minio.Client, config MinioConf) {
 			if err == nil {
 				break
 			}
-			time.Sleep(RETRY_DELAY)
+			time.Sleep(constants.RETRY_DELAY)
 		}
 		if err != nil {
 			log.Errorf("could not download attachment: %s", err)

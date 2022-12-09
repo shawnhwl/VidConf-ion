@@ -1,27 +1,15 @@
-package server
+package mgmt
 
 import (
 	"os"
 
-	natsDiscoveryClient "github.com/cloudwebrtc/nats-discovery/pkg/client"
-	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
-	natsRPC "github.com/cloudwebrtc/nats-grpc/pkg/rpc"
-	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	minioService "github.com/pion/ion/apps/minio"
 	postgresService "github.com/pion/ion/apps/postgres"
 	"github.com/pion/ion/pkg/db"
-	"github.com/pion/ion/pkg/ion"
-	"github.com/pion/ion/pkg/proto"
-	"github.com/pion/ion/pkg/runner"
 	"github.com/pion/ion/pkg/util"
 	"github.com/spf13/viper"
-	"google.golang.org/grpc/reflection"
 )
-
-type GlobalConf struct {
-	Dc string `mapstructure:"dc"`
-}
 
 type LogConf struct {
 	Level string `mapstructure:"level"`
@@ -42,7 +30,6 @@ type RoomMgmtConf struct {
 }
 
 type Config struct {
-	Global   GlobalConf                   `mapstructure:"global"`
 	Log      LogConf                      `mapstructure:"log"`
 	Nats     NatsConf                     `mapstructure:"nats"`
 	Redis    db.Config                    `mapstructure:"redis"`
@@ -70,7 +57,7 @@ func (c *Config) Load(file string) error {
 
 	err = viper.ReadInConfig()
 	if err != nil {
-		log.Errorf("config file %s read failed. %v\n", file, err)
+		log.Errorf("config file %s read failed. %s\n", file, err)
 		return err
 	}
 
@@ -79,7 +66,7 @@ func (c *Config) Load(file string) error {
 		return err
 	}
 	if err != nil {
-		log.Errorf("config file %s loaded failed. %v\n", file, err)
+		log.Errorf("config file %s loaded failed. %s\n", file, err)
 		return err
 	}
 
@@ -87,86 +74,29 @@ func (c *Config) Load(file string) error {
 	return nil
 }
 
-// RoomMgmt represents a room-mgmt node
+// RoomMgmt represents a room-mgmt instance
 type RoomMgmt struct {
-	// for standalone running
-	runner.Service
-
 	// HTTP room-mgmt service
 	RoomMgmtService
-
-	// for distributed node running
-	ion.Node
-	natsConn         *nats.Conn
-	natsDiscoveryCli *natsDiscoveryClient.Client
-
-	// config
-	conf Config
 }
 
 // New create a RoomMgmt node instance
 func New() *RoomMgmt {
-	api := &RoomMgmt{
-		Node: ion.NewNode("room-mgmt-" + util.RandomString(6)),
-	}
-	return api
+	return &RoomMgmt{}
 }
 
 // Start RoomMgmt node
 func (r *RoomMgmt) Start(conf Config) error {
 	var err error
 
-	log.Infof("r.conf.Nats.URL===%+v", r.conf.Nats.URL)
-	err = r.Node.Start(conf.Nats.URL)
+	log.Infof("r.conf.Nats.URL===%+v", conf.Nats.URL)
+	natsConn, err := util.NewNatsConn(conf.Nats.URL)
 	if err != nil {
-		r.Close()
+		log.Errorf("new nats conn error %s", err)
 		return err
 	}
 
-	ndc, err := natsDiscoveryClient.NewClient(r.Node.NatsConn())
-	if err != nil {
-		log.Errorf("failed to create discovery client: %v", err)
-		ndc.Close()
-		return err
-	}
-
-	r.natsDiscoveryCli = ndc
-	r.natsConn = r.Node.NatsConn()
-	r.RoomMgmtService = *NewRoomMgmtService(conf, r.natsConn)
-
-	// Register reflection service on nats-rpc server.
-	reflection.Register(r.Node.ServiceRegistrar().(*natsRPC.Server))
-
-	node := discovery.Node{
-		DC:      conf.Global.Dc,
-		Service: proto.ServiceROOMMGMT,
-		NID:     r.Node.NID,
-		RPC: discovery.RPC{
-			Protocol: discovery.NGRPC,
-			Addr:     conf.Nats.URL,
-			//Params:   map[string]string{"username": "foo", "password": "bar"},
-		},
-	}
-
-	go func() {
-		err := r.Node.KeepAlive(node)
-		if err != nil {
-			log.Errorf("sfu.Node.KeepAlive(%v) error %v", r.Node.NID, err)
-		}
-	}()
-
-	//Watch ALL nodes.
-	go func() {
-		err := r.Node.Watch(proto.ServiceALL)
-		if err != nil {
-			log.Errorf("Node.Watch(proto.ServiceALL) error %v", err)
-		}
-	}()
+	r.RoomMgmtService = *NewRoomMgmtService(conf, natsConn)
 
 	return nil
-}
-
-// Close all
-func (s *RoomMgmt) Close() {
-	s.Node.Close()
 }

@@ -1,7 +1,3 @@
-[global]
-# data center id
-dc = "dc1"
-
 [log]
 level = "info"
 # level = "debug"
@@ -10,7 +6,7 @@ level = "info"
 url = "nats://nats:4222"
 
 [postgres]
-addr = "postgres:5432"
+addr = "vidconf:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"

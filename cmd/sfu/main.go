@@ -31,7 +31,7 @@ func main() {
 	conf := sfu.Config{}
 	err := conf.Load(confFile)
 	if err != nil {
-		log.Errorf("config load error: %v", err)
+		log.Errorf("config load error: %s", err)
 		return
 	}
 
@@ -40,7 +40,7 @@ func main() {
 			log.Infof("start pprof on %s", paddr)
 			err := http.ListenAndServe(paddr, nil)
 			if err != nil {
-				log.Errorf("http.ListenAndServe err=%v", err)
+				log.Errorf("http.ListenAndServe err=%s", err)
 			}
 		}()
 	}
@@ -50,7 +50,7 @@ func main() {
 
 	node := sfu.NewSFU()
 	if err := node.Start(conf); err != nil {
-		log.Errorf("sfu init start: %v", err)
+		log.Errorf("sfu init start: %s", err)
 		os.Exit(-1)
 	}
 	defer node.Close()

@@ -15,7 +15,7 @@ password = ""
 db = 0
 
 [postgres]
-addr = "postgres:5432"
+addr = "vidconf:5432"
 user = "vidconfAdmin"
 password = "vidconfPass"
 database = "vidconf"
@@ -23,7 +23,7 @@ roomMgmtSchema = "room-mgmt"
 roomRecordSchema = "room-recorder"
 
 [minio]
-endpoint = "minio:9000"
+endpoint = "vidconf:9000"
 useSSL = false
 username = "minioadmin"
 password = "minioadmin"

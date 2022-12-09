@@ -10,11 +10,7 @@ import (
 
 	_ "github.com/lib/pq"
 	log "github.com/pion/ion-log"
-)
-
-const (
-	RETRY_COUNT int           = 3
-	RETRY_DELAY time.Duration = 5 * time.Second
+	constants "github.com/pion/ion/apps/constants"
 )
 
 type PostgresConf struct {
@@ -42,40 +38,40 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 		config.Database)
 	var postgresDB *sql.DB
 	// postgresDB.Open
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		postgresDB, err = sql.Open("postgres", psqlconn)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to connect to database: %v\n", err)
+		log.Errorf("Unable to connect to database: %s\n", err)
 		os.Exit(1)
 	}
 	// postgresDB.Ping
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		err = postgresDB.Ping()
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to ping database: %v\n", err)
+		log.Errorf("Unable to ping database: %s\n", err)
 		os.Exit(1)
 	}
 	// create RoomMgmtSchema schema
 	createStmt := `CREATE SCHEMA IF NOT EXISTS "` + config.RoomMgmtSchema + `"`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "room"
@@ -91,15 +87,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"createdAt"      TIMESTAMPTZ NOT NULL,
 					"updatedBy"      TEXT NOT NULL,
 					"updatedAt"      TIMESTAMPTZ NOT NULL)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "announcement"
@@ -116,29 +112,29 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"updatedAt"             TIMESTAMPTZ NOT NULL,
 					"updatedBy"             TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomMgmtSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 
 	// create RoomRecordSchema schema
 	createStmt = `CREATE SCHEMA IF NOT EXISTS "` + config.RoomRecordSchema + `"`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "room"
@@ -147,15 +143,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"name"      TEXT NOT NULL,
 					"startTime" TIMESTAMPTZ NOT NULL,
 					"endTime"   TIMESTAMPTZ NOT NULL)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "playback"
@@ -164,15 +160,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"roomId"         UUID NOT NULL,
 					"name"           TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id"))`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "metadata"
@@ -182,15 +178,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 		"timestamp" TIMESTAMPTZ NOT NULL,
 		"data"      JSON NOT NULL,
 		CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "peerEvent"
@@ -202,15 +198,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"peerId"    TEXT NOT NULL,
 					"peerName"  TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "chat"
@@ -218,6 +214,7 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"id"        UUID PRIMARY KEY,
 					"roomId"    UUID NOT NULL,
 					"timestamp" TIMESTAMPTZ NOT NULL,
+					"mimeType"  TEXT NOT NULL,
 					"userId"    TEXT NOT NULL,
 					"userName"  TEXT NOT NULL,
 					"text"      TEXT NOT NULL,
@@ -225,15 +222,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"fileSize"  INT NOT NULL,
 					"filePath"  TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "trackEvent"
@@ -243,15 +240,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"peerId"         TEXT NOT NULL,
 					"trackRemoteIds" TEXT ARRAY NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "track"
@@ -261,15 +258,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"trackRemoteId" TEXT NOT NULL,
 					"mimeType"      TEXT NOT NULL,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 	// create table "trackStream"
@@ -280,15 +277,15 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"filePath" TEXT NOT NULL,
 					CONSTRAINT fk_track FOREIGN KEY("trackId") REFERENCES "` + config.RoomRecordSchema + `"."track"("id") ON DELETE CASCADE,
 					CONSTRAINT fk_room FOREIGN KEY("roomId") REFERENCES "` + config.RoomRecordSchema + `"."room"("id") ON DELETE CASCADE)`
-	for retry := 0; retry < RETRY_COUNT; retry++ {
+	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = postgresDB.Exec(createStmt)
 		if err == nil {
 			break
 		}
-		time.Sleep(RETRY_DELAY)
+		time.Sleep(constants.RETRY_DELAY)
 	}
 	if err != nil {
-		log.Errorf("Unable to execute sql statement: %v\n", err)
+		log.Errorf("Unable to execute sql statement: %s\n", err)
 		os.Exit(1)
 	}
 

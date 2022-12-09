@@ -24,22 +24,21 @@ func main() {
 	conf := recorder.Config{}
 	err := conf.Load(confFile)
 	if err != nil {
-		log.Errorf("config load error: %v", err)
+		log.Errorf("config load error: %s", err)
 		return
 	}
 
 	log.Init(conf.Log.Level)
 	log.Infof("--- Starting Room-Recorder ---")
 
-	quitCh := make(chan os.Signal, 1)
 	node := recorder.New()
-	if err := node.Start(conf, quitCh); err != nil {
-		log.Errorf("room-recorder init start: %v", err)
-		os.Exit(-1)
+	if err := node.Start(conf); err != nil {
+		log.Errorf("room-recorder init start: %s", err)
+		os.Exit(1)
 	}
-	defer node.Close()
 
 	// Press Ctrl+C to exit the process
+	quitCh := make(chan os.Signal, 1)
 	signal.Notify(quitCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	<-quitCh
 	node.FinalizeRoomRecord()
