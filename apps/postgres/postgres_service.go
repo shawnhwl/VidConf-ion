@@ -1,8 +1,11 @@
 package postgres
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -81,7 +84,7 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 					"status"         TEXT NOT NULL,
 					"startTime"      TIMESTAMPTZ NOT NULL,
 					"endTime"        TIMESTAMPTZ NOT NULL,
-					"allowedUserId"  TEXT ARRAY NOT NULL,
+					"allowedUserId"  JSONB NOT NULL,
 					"earlyEndReason" TEXT NOT NULL,
 					"createdBy"      TEXT NOT NULL,
 					"createdAt"      TIMESTAMPTZ NOT NULL,
@@ -290,4 +293,35 @@ func GetPostgresDB(config PostgresConf) *sql.DB {
 	}
 
 	return postgresDB
+}
+
+func StringArray2ByteArray(stringArray []string) ([]byte, error) {
+	log.Infof("stringArray:%v", stringArray)
+	var buffer bytes.Buffer
+	err := json.NewEncoder(&buffer).Encode(stringArray)
+	if err != nil {
+		log.Errorf("could not encode []string to []byte: %s", err)
+		return nil, err
+	}
+	byteArray, err := ioutil.ReadAll(&buffer)
+	if err != nil {
+		log.Errorf("could not encode []string to []byte: %s", err)
+		return nil, err
+	}
+
+	log.Infof("byteArray:%s", byteArray)
+	return byteArray, nil
+}
+
+func ByteArray2StringArray(byteArray []byte) ([]string, error) {
+	log.Infof("byteArray:%s", byteArray)
+	stringArray := make([]string, 0)
+	err := json.NewDecoder(bytes.NewReader(byteArray)).Decode(&stringArray)
+	if err != nil {
+		log.Errorf("could not decode []byte to []string: %s", err)
+		return stringArray, err
+	}
+
+	log.Infof("stringArray:%v", stringArray)
+	return stringArray, nil
 }

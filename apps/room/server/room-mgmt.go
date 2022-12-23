@@ -6,15 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
 	log "github.com/pion/ion-log"
 	constants "github.com/pion/ion/apps/constants"
+	postgresService "github.com/pion/ion/apps/postgres"
 )
 
 type RoomBooking struct {
 	status        string
 	name          string
-	allowedUserId pq.StringArray
+	allowedUserId []string
 }
 
 func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (string, error) {
@@ -41,7 +41,7 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 				return "", err
 			}
 		}
-		booking.allowedUserId = make(pq.StringArray, 0)
+		booking.allowedUserId = make([]string, 0)
 		booking.status = ""
 	} else {
 		queryStmt := `SELECT    "name",
@@ -60,9 +60,10 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 			log.Errorf("could not query database")
 			return "", errors.New("could not query database")
 		}
+		allowedUserId := make([]byte, 65535)
 		err := row.Scan(&booking.name,
 			&booking.status,
-			&booking.allowedUserId)
+			&allowedUserId)
 		if err != nil {
 			if strings.Contains(err.Error(), constants.NOT_FOUND_PK) {
 				return "", errors.New(roomNotFound(roomId))
@@ -70,7 +71,12 @@ func (s *RoomSignalService) getRoomsByRoomid(roomId, uId, userName string) (stri
 				return "", err
 			}
 		}
+		booking.allowedUserId, err = postgresService.ByteArray2StringArray(allowedUserId)
+		if err != nil {
+			return "", err
+		}
 	}
+
 	if booking.status == constants.ROOM_BOOKED {
 		log.Warnf(roomNotStarted(roomId))
 		return "", errors.New(roomNotStarted(roomId))

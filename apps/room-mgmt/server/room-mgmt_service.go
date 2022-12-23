@@ -62,7 +62,7 @@ type Room struct {
 	startTime      time.Time
 	endTime        time.Time
 	announcements  []Announcement
-	allowedUserId  pq.StringArray
+	allowedUserId  []string
 	earlyEndReason string
 	createdBy      string
 	createdAt      time.Time
@@ -93,7 +93,7 @@ type PatchRoom struct {
 	StartTime     *time.Time          `json:"startTime,omitempty"`
 	EndTime       *time.Time          `json:"endTime,omitempty"`
 	Announcements []PatchAnnouncement `json:"announcements,omitempty"`
-	AllowedUserId pq.StringArray      `json:"allowedUserId,omitempty"`
+	AllowedUserId []string            `json:"allowedUserId,omitempty"`
 }
 
 type GetAnnouncement struct {
@@ -115,7 +115,7 @@ type GetRoom struct {
 	StartTime      time.Time         `json:"startTime"`
 	EndTime        time.Time         `json:"endTime"`
 	Announcements  []GetAnnouncement `json:"announcements"`
-	AllowedUserId  pq.StringArray    `json:"allowedUserId"`
+	AllowedUserId  []string          `json:"allowedUserId"`
 	Users          []User            `json:"users"`
 	EarlyEndReason string            `json:"earlyEndReason"`
 	CreatedBy      string            `json:"createdBy"`
@@ -183,12 +183,18 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 	room.startTime = *patchRoom.StartTime
 	room.endTime = *patchRoom.EndTime
 	room.announcements = make([]Announcement, 0)
-	room.allowedUserId = make(pq.StringArray, 0)
+	room.allowedUserId = make([]string, 0)
 	room.earlyEndReason = ""
 	room.createdBy = *patchRoom.Requestor
 	room.createdAt = time.Now()
 	room.updatedBy = *patchRoom.Requestor
 	room.updatedAt = room.createdAt
+	allowedUserId, err := postgresService.StringArray2ByteArray(room.allowedUserId)
+	if err != nil {
+		log.Errorf("error: %s", err)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err})
+		return
+	}
 	insertStmt := `INSERT INTO "` + s.roomMgmtSchema + `"."room"(   "id",
 																	"name",
 																	"status",
@@ -208,7 +214,7 @@ func (s *RoomMgmtService) postRooms(c *gin.Context) {
 			room.status,
 			room.startTime,
 			room.endTime,
-			room.allowedUserId,
+			allowedUserId,
 			room.earlyEndReason,
 			room.createdBy,
 			room.createdAt,
@@ -262,7 +268,7 @@ func (s *RoomMgmtService) getRooms(c *gin.Context) {
 	}
 
 	var rooms Rooms
-	rooms.Ids = make(pq.StringArray, 0)
+	rooms.Ids = make([]string, 0)
 	var rows *sql.Rows
 	var err error
 	queryStmt := `SELECT "id" FROM "` + s.roomMgmtSchema + `"."room"`
@@ -1582,7 +1588,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		room.endTime = *patchRoom.EndTime
 	}
 	if len(patchRoom.AllowedUserId) == 0 {
-		room.allowedUserId = make(pq.StringArray, 0)
+		room.allowedUserId = make([]string, 0)
 	}
 	for _, patchuser := range patchRoom.AllowedUserId {
 		isPatched := false
@@ -1599,6 +1605,12 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 		room.allowedUserId = append(room.allowedUserId, patchuser)
 	}
 
+	allowedUserId, err := postgresService.StringArray2ByteArray(room.allowedUserId)
+	if err != nil {
+		log.Errorf("error: %s", err)
+		c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": err})
+		return err
+	}
 	updateStmt := `UPDATE "` + s.roomMgmtSchema + `"."room"
 					SET "updatedBy"=$1,
 						"updatedAt"=$2,
@@ -1606,7 +1618,6 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 						"startTime"=$4,
 						"endTime"=$5,
 						"allowedUserId"=$6 WHERE "id"=$7`
-	var err error
 	for retry := 0; retry < constants.RETRY_COUNT; retry++ {
 		_, err = s.postgresDB.Exec(updateStmt,
 			room.updatedBy,
@@ -1614,7 +1625,7 @@ func (s *RoomMgmtService) patchRoom(room *Room, patchRoom PatchRoom, c *gin.Cont
 			room.name,
 			room.startTime,
 			room.endTime,
-			room.allowedUserId,
+			allowedUserId,
 			room.id)
 		if err == nil {
 			break
@@ -1822,12 +1833,13 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 		return GetRoom{}, row.Err()
 	}
 	var getRoom GetRoom
+	allowedUserId := make([]byte, 65535)
 	err := row.Scan(&getRoom.Id,
 		&getRoom.Name,
 		&getRoom.Status,
 		&getRoom.StartTime,
 		&getRoom.EndTime,
-		&getRoom.AllowedUserId,
+		&allowedUserId,
 		&getRoom.EarlyEndReason,
 		&getRoom.CreatedBy,
 		&getRoom.CreatedAt,
@@ -1843,6 +1855,10 @@ func (s *RoomMgmtService) queryGetRoom(roomId string, c *gin.Context) (GetRoom, 
 			log.Errorf(errorString)
 			c.JSON(http.StatusInternalServerError, map[string]interface{}{"error": errorString})
 		}
+		return GetRoom{}, err
+	}
+	getRoom.AllowedUserId, err = postgresService.ByteArray2StringArray(allowedUserId)
+	if err != nil {
 		return GetRoom{}, err
 	}
 
@@ -1925,17 +1941,22 @@ func (s *RoomMgmtService) queryRoom(roomId string) (Room, error) {
 		return Room{}, rows.Err()
 	}
 	var room Room
+	allowedUserId := make([]byte, 65535)
 	err := rows.Scan(&room.id,
 		&room.name,
 		&room.status,
 		&room.startTime,
 		&room.endTime,
-		&room.allowedUserId,
+		&allowedUserId,
 		&room.earlyEndReason,
 		&room.createdBy,
 		&room.createdAt,
 		&room.updatedBy,
 		&room.updatedAt)
+	if err != nil {
+		return Room{}, err
+	}
+	room.allowedUserId, err = postgresService.ByteArray2StringArray(allowedUserId)
 	if err != nil {
 		return Room{}, err
 	}
